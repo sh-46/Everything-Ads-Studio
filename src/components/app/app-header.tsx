@@ -3,7 +3,9 @@ import { Suspense } from "react";
 import { LogOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { signOut } from "@/features/auth/actions";
+import { isDemoMode } from "@/lib/demo/mode";
 import { requireSession } from "@/lib/supabase/server";
+import { DemoBadge } from "./demo-badge";
 import { NavLink } from "./nav-link";
 
 const NAV_ITEMS = [
@@ -39,14 +41,20 @@ export function AppHeader() {
           ))}
         </nav>
         <div className="ml-auto flex items-center gap-3">
-          <Suspense fallback={null}>
-            <UserEmail />
-          </Suspense>
-          <form action={signOut}>
-            <Button type="submit" variant="ghost" size="sm" aria-label="Sign out">
-              <LogOut /> Sign out
-            </Button>
-          </form>
+          {isDemoMode() ? (
+            <DemoBadge />
+          ) : (
+            <>
+              <Suspense fallback={null}>
+                <UserEmail />
+              </Suspense>
+              <form action={signOut}>
+                <Button type="submit" variant="ghost" size="sm" aria-label="Sign out">
+                  <LogOut /> Sign out
+                </Button>
+              </form>
+            </>
+          )}
         </div>
       </div>
     </header>

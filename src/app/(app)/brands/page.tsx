@@ -4,10 +4,12 @@ import { EmptyState, PageHeader } from "@/components/app/page-header";
 import { CreateBrandDialog } from "@/features/brands/components/create-brand-dialog";
 import { listBrands } from "@/features/brands/queries";
 import { requireSession } from "@/lib/supabase/server";
+import { Suspense } from "react";
+import PageSkeleton from "@/app/(app)/loading";
 
 export const metadata: Metadata = { title: "Brands" };
 
-export default async function BrandsPage() {
+async function BrandsPageContent() {
   const ctx = await requireSession();
   const brands = await listBrands(ctx);
 
@@ -38,5 +40,14 @@ export default async function BrandsPage() {
         </ul>
       )}
     </>
+  );
+}
+
+// Data loads inside Suspense so navigation shows the skeleton immediately (Cache Components).
+export default function BrandsPage() {
+  return (
+    <Suspense fallback={<PageSkeleton />}>
+      <BrandsPageContent />
+    </Suspense>
   );
 }

@@ -10,10 +10,12 @@ import { ProjectCard } from "@/features/projects/components/project-card";
 import { listProjects } from "@/features/projects/queries";
 import { requireSession } from "@/lib/supabase/server";
 import { z } from "zod";
+import { Suspense } from "react";
+import PageSkeleton from "@/app/(app)/loading";
 
 export const metadata: Metadata = { title: "Brand" };
 
-export default async function BrandPage({ params }: PageProps<"/brands/[brandId]">) {
+async function BrandPageContent({ params }: PageProps<"/brands/[brandId]">) {
   const { brandId } = await params;
   if (!z.uuid().safeParse(brandId).success) notFound();
   const ctx = await requireSession();
@@ -80,5 +82,14 @@ export default async function BrandPage({ params }: PageProps<"/brands/[brandId]
         </div>
       )}
     </>
+  );
+}
+
+// Data loads inside Suspense so navigation shows the skeleton immediately (Cache Components).
+export default function BrandPage(props: PageProps<"/brands/[brandId]">) {
+  return (
+    <Suspense fallback={<PageSkeleton />}>
+      <BrandPageContent {...props} />
+    </Suspense>
   );
 }

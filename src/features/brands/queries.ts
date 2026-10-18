@@ -1,6 +1,8 @@
 import "server-only";
 
 import { parseBrandKit, type BrandKit } from "@/domain/brand-kit";
+import { isDemoMode } from "@/lib/demo/mode";
+import { demoGetBrand, demoListBrands } from "@/lib/demo/store";
 import type { SessionContext } from "@/lib/supabase/server";
 
 export interface BrandSummary {
@@ -20,6 +22,7 @@ export interface BrandDetail {
 }
 
 export async function listBrands(ctx: SessionContext, { includeArchived = false } = {}): Promise<BrandSummary[]> {
+  if (isDemoMode()) return demoListBrands({ includeArchived });
   let query = ctx.supabase
     .from("brands")
     .select("id, name, archived_at, updated_at, model_projects(count)")
@@ -44,6 +47,7 @@ interface KitRow {
 }
 
 export async function getBrand(ctx: SessionContext, brandId: string): Promise<BrandDetail | null> {
+  if (isDemoMode()) return demoGetBrand(brandId);
   const { data, error } = await ctx.supabase
     .from("brands")
     .select("id, name, archived_at, brand_kits(kit, revision)")

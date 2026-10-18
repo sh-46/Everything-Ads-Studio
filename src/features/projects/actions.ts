@@ -6,12 +6,21 @@ import { parseBrandKit } from "@/domain/brand-kit";
 import { defaultExportConfig } from "@/domain/export-config";
 import { PROJECT_STATUSES, projectMetaInputSchema, type ProjectMetaInput } from "@/domain/project";
 import { defaultProjectScenes } from "@/domain/scene-templates";
+import { isDemoMode } from "@/lib/demo/mode";
+import * as demo from "@/lib/demo/store";
 import { fail, ok, type Result } from "@/lib/result";
 import { requireSession } from "@/lib/supabase/server";
 
 export async function createProject(brandId: string, input: ProjectMetaInput): Promise<Result<{ id: string }>> {
   const parsed = projectMetaInputSchema.safeParse(input);
   if (!parsed.success) return fail(parsed.error.issues[0].message);
+  if (isDemoMode()) {
+    const id = demo.demoCreateProject(brandId, parsed.data);
+    if (!id) return fail("Brand not found.");
+    revalidatePath(`/brands/${brandId}`);
+    revalidatePath("/dashboard");
+    return ok({ id });
+  }
 
   const ctx = await requireSession();
   const { data: kitRow, error: kitError } = await ctx.supabase
@@ -42,6 +51,11 @@ export async function createProject(brandId: string, input: ProjectMetaInput): P
 export async function updateProjectMeta(projectId: string, input: ProjectMetaInput): Promise<Result> {
   const parsed = projectMetaInputSchema.safeParse(input);
   if (!parsed.success) return fail(parsed.error.issues[0].message);
+  if (isDemoMode()) {
+    if (!demo.demoUpdateProject(projectId, parsed.data)) return fail("Project not found.");
+    revalidatePath(`/projects/${projectId}`, "layout");
+    return ok();
+  }
 
   const ctx = await requireSession();
   const { error } = await ctx.supabase
@@ -62,6 +76,11 @@ export async function updateProjectMeta(projectId: string, input: ProjectMetaInp
 export async function setProjectStatus(projectId: string, status: string): Promise<Result> {
   const parsed = z.enum(PROJECT_STATUSES).safeParse(status);
   if (!parsed.success) return fail("Unknown status.");
+  if (isDemoMode()) {
+    if (!demo.demoUpdateProject(projectId, { status: parsed.data })) return fail("Project not found.");
+    revalidatePath(`/projects/${projectId}`, "layout");
+    return ok();
+  }
 
   const ctx = await requireSession();
   const { error } = await ctx.supabase.from("model_projects").update({ status: parsed.data }).eq("id", projectId);
@@ -74,6 +93,12 @@ export async function setProjectStatus(projectId: string, status: string): Promi
 export async function duplicateProject(projectId: string, name: string): Promise<Result<{ id: string }>> {
   const parsed = projectMetaInputSchema.shape.name.safeParse(name);
   if (!parsed.success) return fail(parsed.error.issues[0].message);
+  if (isDemoMode()) {
+    const id = demo.demoDuplicateProject(projectId, parsed.data);
+    if (!id) return fail("Project not found.");
+    revalidatePath("/dashboard");
+    return ok({ id });
+  }
 
   const ctx = await requireSession();
   const { data, error } = await ctx.supabase.rpc("duplicate_model_project", {
@@ -87,6 +112,12 @@ export async function duplicateProject(projectId: string, name: string): Promise
 }
 
 export async function setProjectArchived(projectId: string, archived: boolean): Promise<Result> {
+  if (isDemoMode()) {
+    if (!demo.demoUpdateProject(projectId, { archived })) return fail("Project not found.");
+    revalidatePath(`/projects/${projectId}`, "layout");
+    revalidatePath("/dashboard");
+    return ok();
+  }
   const ctx = await requireSession();
   const { error } = await ctx.supabase
     .from("model_projects")

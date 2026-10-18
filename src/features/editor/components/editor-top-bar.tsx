@@ -3,6 +3,7 @@
 import { AlertTriangle, Check, ChevronRight, CloudOff, Loader2, Redo2, Undo2 } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
+import { DemoBadge } from "@/components/app/demo-badge";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useSaveStatus } from "../hooks/use-autosave";
 import { useEditorStore } from "../store/editor-store";
@@ -47,11 +48,13 @@ export function EditorTopBar({
   brandName,
   projectId,
   projectName,
+  demoMode,
 }: {
   brandId: string;
   brandName: string;
   projectId: string;
   projectName: string;
+  demoMode: boolean;
 }) {
   const canUndo = useEditorStore((s) => s.history.past.length > 0);
   const canRedo = useEditorStore((s) => s.history.future.length > 0);
@@ -76,6 +79,7 @@ export function EditorTopBar({
         <span className="font-medium">Editor</span>
       </nav>
 
+      {demoMode && <DemoBadge />}
       <div className="ml-auto flex items-center gap-1">
         <Tooltip>
           <TooltipTrigger asChild>

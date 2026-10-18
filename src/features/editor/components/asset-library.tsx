@@ -26,7 +26,7 @@ async function readDimensions(file: File): Promise<{ width: number; height: numb
   return size;
 }
 
-export function AssetLibrary({ workspaceId }: { workspaceId: string }) {
+export function AssetLibrary({ workspaceId, demoMode }: { workspaceId: string; demoMode: boolean }) {
   const assets = useEditorStore((s) => s.assets);
   const projectId = useEditorStore((s) => s.projectId);
   const brandId = useEditorStore((s) => s.brandId);
@@ -53,6 +53,22 @@ export function AssetLibrary({ workspaceId }: { workspaceId: string }) {
       if (file.size > MAX_PHOTO_BYTES) throw new Error("Photos must be 25 MB or smaller.");
       const mimeType = file.type as PhotoMime;
       const { width, height } = await readDimensions(file);
+
+      if (demoMode) {
+        // Local Demo Mode: the dev server keeps the file in memory; Supabase is not involved.
+        const form = new FormData();
+        form.set("file", file);
+        form.set("projectId", projectId);
+        form.set("width", String(width));
+        form.set("height", String(height));
+        const response = await fetch("/api/demo/assets", { method: "POST", body: form });
+        const body = (await response.json()) as Asset | { error: string };
+        if (!response.ok || "error" in body) throw new Error("error" in body ? body.error : "Upload failed");
+        addAsset(body);
+        setUpload(id, null);
+        return;
+      }
+
       const path = photoStoragePath(workspaceId, brandId, projectId, id, mimeType);
 
       const { error: uploadError } = await createClient()

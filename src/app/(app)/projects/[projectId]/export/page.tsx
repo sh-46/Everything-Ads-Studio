@@ -5,10 +5,12 @@ import { NotYetAvailable } from "@/components/app/not-yet-available";
 import { PageHeader } from "@/components/app/page-header";
 import { getProject } from "@/features/projects/queries";
 import { requireSession } from "@/lib/supabase/server";
+import { Suspense } from "react";
+import PageSkeleton from "@/app/(app)/loading";
 
 export const metadata: Metadata = { title: "Export" };
 
-export default async function ExportPage({ params }: PageProps<"/projects/[projectId]/export">) {
+async function ExportPageContent({ params }: PageProps<"/projects/[projectId]/export">) {
   const { projectId } = await params;
   if (!z.uuid().safeParse(projectId).success) notFound();
   const project = await getProject(await requireSession(), projectId);
@@ -35,5 +37,14 @@ export default async function ExportPage({ params }: PageProps<"/projects/[proje
         ]}
       />
     </>
+  );
+}
+
+// Data loads inside Suspense so navigation shows the skeleton immediately (Cache Components).
+export default function ExportPage(props: PageProps<"/projects/[projectId]/export">) {
+  return (
+    <Suspense fallback={<PageSkeleton />}>
+      <ExportPageContent {...props} />
+    </Suspense>
   );
 }

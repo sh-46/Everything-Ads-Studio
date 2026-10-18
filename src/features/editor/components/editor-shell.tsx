@@ -29,6 +29,8 @@ const CanvasStage = dynamic(() => import("./canvas-stage"), {
 
 export interface EditorShellProps {
   workspaceId: string;
+  /** Local Demo Mode (decided on the server; never read from client env). */
+  demoMode: boolean;
   projectId: string;
   projectName: string;
   brandId: string;
@@ -117,6 +119,7 @@ export function EditorShell(props: EditorShellProps) {
         brandName={props.brandName}
         projectId={props.projectId}
         projectName={props.projectName}
+        demoMode={props.demoMode}
       />
       <SaveIssuesBanner />
       <div className="flex min-h-0 flex-1">
@@ -147,7 +150,11 @@ export function EditorShell(props: EditorShellProps) {
             ))}
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto" role="tabpanel">
-            {tab === "layers" ? <LayerList /> : <AssetLibrary workspaceId={props.workspaceId} />}
+            {tab === "layers" ? (
+              <LayerList />
+            ) : (
+              <AssetLibrary workspaceId={props.workspaceId} demoMode={props.demoMode} />
+            )}
           </div>
         </aside>
 

@@ -1,6 +1,8 @@
 import "server-only";
 
 import type { Asset } from "@/domain/asset";
+import { isDemoMode } from "@/lib/demo/mode";
+import { demoListBrandPhotos } from "@/lib/demo/store";
 import type { SessionContext } from "@/lib/supabase/server";
 
 export const ASSET_BUCKET = "assets";
@@ -45,6 +47,7 @@ async function withSignedUrls(ctx: SessionContext, rows: AssetRow[]): Promise<As
 
 /** Photos belonging to one brand. Brand scoping keeps OEM assets from leaking across brands. */
 export async function listBrandPhotos(ctx: SessionContext, brandId: string): Promise<Asset[]> {
+  if (isDemoMode()) return demoListBrandPhotos(brandId);
   const { data, error } = await ctx.supabase
     .from("assets")
     .select(ASSET_COLUMNS)

@@ -1,11 +1,17 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { isDemoMode } from "@/lib/demo/mode";
 import { supabaseEnv } from "@/lib/env";
 
 const PUBLIC_PATHS = ["/login", "/auth"];
 
 /** Refreshes the auth session cookie and redirects anonymous users to /login. */
 export async function updateSession(request: NextRequest) {
+  // Local Demo Mode needs no auth; /login just forwards to the dashboard.
+  if (isDemoMode()) {
+    if (request.nextUrl.pathname === "/login") return NextResponse.redirect(new URL("/dashboard", request.url));
+    return NextResponse.next({ request });
+  }
   let response = NextResponse.next({ request });
   const { url, key } = supabaseEnv();
 

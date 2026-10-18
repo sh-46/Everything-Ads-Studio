@@ -3,6 +3,7 @@
 import { z } from "zod";
 import { registerAssetInputSchema, type Asset, type RegisterAssetInput } from "@/domain/asset";
 import { fail, ok, type Result } from "@/lib/result";
+import { isDemoMode } from "@/lib/demo/mode";
 import { requireSession } from "@/lib/supabase/server";
 import { ASSET_BUCKET, getAssetById, listBrandPhotos } from "./queries";
 
@@ -14,6 +15,8 @@ export async function registerPhoto(input: RegisterAssetInput): Promise<Result<A
   const parsed = registerAssetInputSchema.safeParse(input);
   if (!parsed.success) return fail(`Invalid upload: ${parsed.error.issues[0].message}`);
   const value = parsed.data;
+  // Demo uploads go through /api/demo/assets instead of Supabase Storage.
+  if (isDemoMode()) return fail("Not available in Demo Mode.");
 
   const ctx = await requireSession();
   const { data: project, error: projectError } = await ctx.supabase

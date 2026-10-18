@@ -5,10 +5,12 @@ import { PageHeader } from "@/components/app/page-header";
 import { BrandKitForm } from "@/features/brands/components/brand-kit-form";
 import { getBrand } from "@/features/brands/queries";
 import { requireSession } from "@/lib/supabase/server";
+import { Suspense } from "react";
+import PageSkeleton from "@/app/(app)/loading";
 
 export const metadata: Metadata = { title: "Brand Kit" };
 
-export default async function BrandSettingsPage({ params }: PageProps<"/brands/[brandId]/settings">) {
+async function BrandSettingsPageContent({ params }: PageProps<"/brands/[brandId]/settings">) {
   const { brandId } = await params;
   if (!z.uuid().safeParse(brandId).success) notFound();
   const brand = await getBrand(await requireSession(), brandId);
@@ -32,5 +34,14 @@ export default async function BrandSettingsPage({ params }: PageProps<"/brands/[
         initialRevision={brand.kitRevision}
       />
     </>
+  );
+}
+
+// Data loads inside Suspense so navigation shows the skeleton immediately (Cache Components).
+export default function BrandSettingsPage(props: PageProps<"/brands/[brandId]/settings">) {
+  return (
+    <Suspense fallback={<PageSkeleton />}>
+      <BrandSettingsPageContent {...props} />
+    </Suspense>
   );
 }

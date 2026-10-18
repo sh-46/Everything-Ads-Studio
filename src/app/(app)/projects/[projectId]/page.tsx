@@ -9,10 +9,12 @@ import { ProjectActions } from "@/features/projects/components/project-actions";
 import { ProjectMetaForm } from "@/features/projects/components/project-meta-form";
 import { getProject, listScenes } from "@/features/projects/queries";
 import { requireSession } from "@/lib/supabase/server";
+import { Suspense } from "react";
+import PageSkeleton from "@/app/(app)/loading";
 
 export const metadata: Metadata = { title: "Project" };
 
-export default async function ProjectPage({ params }: PageProps<"/projects/[projectId]">) {
+async function ProjectPageContent({ params }: PageProps<"/projects/[projectId]">) {
   const { projectId } = await params;
   if (!z.uuid().safeParse(projectId).success) notFound();
   const ctx = await requireSession();
@@ -96,5 +98,14 @@ export default async function ProjectPage({ params }: PageProps<"/projects/[proj
         </aside>
       </div>
     </>
+  );
+}
+
+// Data loads inside Suspense so navigation shows the skeleton immediately (Cache Components).
+export default function ProjectPage(props: PageProps<"/projects/[projectId]">) {
+  return (
+    <Suspense fallback={<PageSkeleton />}>
+      <ProjectPageContent {...props} />
+    </Suspense>
   );
 }

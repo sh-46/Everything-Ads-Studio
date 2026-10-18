@@ -3,6 +3,7 @@
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { z } from "zod";
+import { isDemoMode } from "@/lib/demo/mode";
 import { createClient } from "@/lib/supabase/server";
 
 const credentialsSchema = z.object({
@@ -30,6 +31,7 @@ export async function authenticate(_prev: AuthFormState, formData: FormData): Pr
     next: formData.get("next") ?? undefined,
   });
   if (!parsed.success) return { error: parsed.error.issues[0].message };
+  if (isDemoMode()) redirect("/dashboard");
   const { email, password, mode, next } = parsed.data;
   const supabase = await createClient();
 
@@ -52,6 +54,7 @@ export async function authenticate(_prev: AuthFormState, formData: FormData): Pr
 }
 
 export async function signOut() {
+  if (isDemoMode()) redirect("/dashboard");
   const supabase = await createClient();
   await supabase.auth.signOut();
   redirect("/login");

@@ -3,6 +3,8 @@
 import { z } from "zod";
 import { sceneDocumentSchema, type Scene } from "@/domain/scene";
 import { mapScene, SCENE_COLUMNS, type SceneRow } from "@/features/projects/queries";
+import { isDemoMode } from "@/lib/demo/mode";
+import { demoSaveScene } from "@/lib/demo/store";
 import { requireSession } from "@/lib/supabase/server";
 
 const saveSceneInputSchema = z.object({
@@ -30,6 +32,9 @@ export async function saveScene(input: SaveSceneInput): Promise<SaveSceneResult>
     return { status: "error", error: `Invalid scene data at ${issue.path.join(".")}: ${issue.message}` };
   }
   const { sceneId, expectedRevision, name, document } = parsed.data;
+  if (isDemoMode()) {
+    return demoSaveScene(parsed.data) ?? { status: "error", error: "Scene not found." };
+  }
 
   const ctx = await requireSession();
   const { data, error } = await ctx.supabase

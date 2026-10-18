@@ -5,10 +5,12 @@ import { NotYetAvailable } from "@/components/app/not-yet-available";
 import { PageHeader } from "@/components/app/page-header";
 import { getProject } from "@/features/projects/queries";
 import { requireSession } from "@/lib/supabase/server";
+import { Suspense } from "react";
+import PageSkeleton from "@/app/(app)/loading";
 
 export const metadata: Metadata = { title: "Preview" };
 
-export default async function PreviewPage({ params }: PageProps<"/projects/[projectId]/preview">) {
+async function PreviewPageContent({ params }: PageProps<"/projects/[projectId]/preview">) {
   const { projectId } = await params;
   if (!z.uuid().safeParse(projectId).success) notFound();
   const project = await getProject(await requireSession(), projectId);
@@ -34,5 +36,14 @@ export default async function PreviewPage({ params }: PageProps<"/projects/[proj
         ]}
       />
     </>
+  );
+}
+
+// Data loads inside Suspense so navigation shows the skeleton immediately (Cache Components).
+export default function PreviewPage(props: PageProps<"/projects/[projectId]/preview">) {
+  return (
+    <Suspense fallback={<PageSkeleton />}>
+      <PreviewPageContent {...props} />
+    </Suspense>
   );
 }

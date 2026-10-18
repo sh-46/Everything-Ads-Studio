@@ -2,8 +2,11 @@ import "server-only";
 
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
+import { connection } from "next/server";
 import { redirect } from "next/navigation";
 import { cache } from "react";
+import { DEMO_USER_EMAIL, isDemoMode } from "@/lib/demo/mode";
+import { DEMO_WORKSPACE_ID } from "@/lib/demo/store";
 import { supabaseEnv } from "@/lib/env";
 
 /** Per-request server client acting as the signed-in user (RLS applies). */
@@ -39,6 +42,16 @@ export interface SessionContext {
  * Milestone 1 uses the personal workspace created at signup.
  */
 export const requireSession = cache(async (): Promise<SessionContext> => {
+  if (isDemoMode()) {
+    // Local Demo Mode: no Supabase client exists; data functions read the in-memory store.
+    await connection();
+    return {
+      supabase: undefined as unknown as SessionContext["supabase"],
+      userId: "demo-user",
+      email: DEMO_USER_EMAIL,
+      workspaceId: DEMO_WORKSPACE_ID,
+    };
+  }
   const supabase = await createClient();
   const { data, error } = await supabase.auth.getClaims();
   if (error || !data?.claims?.sub) redirect("/login");

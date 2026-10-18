@@ -3,6 +3,8 @@ import "server-only";
 import { exportConfigSchema } from "@/domain/export-config";
 import { modelProjectSchema, type ModelProject } from "@/domain/project";
 import { sceneSchema, type Scene } from "@/domain/scene";
+import { isDemoMode } from "@/lib/demo/mode";
+import { demoGetProject, demoListProjects, demoListScenes } from "@/lib/demo/store";
 import type { SessionContext } from "@/lib/supabase/server";
 
 export interface ProjectListItem extends ModelProject {
@@ -57,6 +59,7 @@ export interface ProjectFilters {
 }
 
 export async function listProjects(ctx: SessionContext, filters: ProjectFilters = {}): Promise<ProjectListItem[]> {
+  if (isDemoMode()) return demoListProjects(filters);
   let query = ctx.supabase
     .from("model_projects")
     .select(PROJECT_COLUMNS)
@@ -77,6 +80,7 @@ export async function listProjects(ctx: SessionContext, filters: ProjectFilters 
 }
 
 export async function getProject(ctx: SessionContext, projectId: string): Promise<ProjectListItem | null> {
+  if (isDemoMode()) return demoGetProject(projectId);
   const { data, error } = await ctx.supabase
     .from("model_projects")
     .select(PROJECT_COLUMNS)
@@ -113,6 +117,7 @@ export function mapScene(row: SceneRow): Scene {
 }
 
 export async function listScenes(ctx: SessionContext, projectId: string): Promise<Scene[]> {
+  if (isDemoMode()) return demoListScenes(projectId);
   const { data, error } = await ctx.supabase
     .from("scenes")
     .select(SCENE_COLUMNS)

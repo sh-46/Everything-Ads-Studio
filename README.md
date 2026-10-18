@@ -38,7 +38,23 @@ Requirements: Node 20.9+ and a Supabase project.
    Site URL to `http://localhost:3000` so the confirmation link (`/auth/confirm`) works.
 5. `npm run dev` → http://localhost:3000
 
-## Scripts
+## Local Demo Mode (no Supabase)
+
+```bash
+npm run dev:demo        # http://localhost:3000 (add `-- -p 3001` for another port)
+```
+
+Explore the Dashboard, Brand Library, Brand Kits, Model Projects and the Scene Editor without signing in.
+Sample data: **Acura (Sample)** with **2026 Acura MDX — Sample** (photos and copy on every scene) and
+**Honda (Sample)** with a separate Brand Kit, to show brand isolation.
+
+- On only when `NODE_ENV=development` **and** `DEMO_MODE=1`. `next build` / `next start` force production,
+  so it cannot activate in a deployed app (covered by `src/lib/demo/mode.test.ts`).
+- No Supabase client is created; data lives in dev-server memory and resets when the server restarts.
+- Sample "photos" are generated illustrations labeled SAMPLE PHOTO, and copy is labeled as sample copy.
+- Photos you upload in Demo Mode stay in dev-server memory (`/api/demo/assets`, 404 outside Demo Mode).
+- Every page shows an amber **Demo Mode · sample data** badge.
+- To remove it later, delete `src/lib/demo/`, `src/app/api/demo/` and the `isDemoMode()` guards.
 
 | Command             | What it does                                                                                                 |
 | ------------------- | ------------------------------------------------------------------------------------------------------------ |
