@@ -230,17 +230,23 @@ create trigger scenes_touch before update on public.scenes
 create trigger export_jobs_touch before update on public.export_jobs
   for each row execute function public.touch_updated_at();
 
--- Runs as the invoking user, so RLS on model_projects still applies.
+-- Runs as the invoking user, so RLS on model_projects still applies. Reads only the row
+-- that exists for the operation: NEW for INSERT/UPDATE, OLD for DELETE (and OLD too when
+-- an UPDATE moves a scene to another project, so both projects are touched).
 create or replace function public.touch_project_from_scene()
 returns trigger
 language plpgsql
 set search_path = ''
 as $$
 begin
-  update public.model_projects
-     set last_edited_at = now()
-   where id = coalesce(new.project_id, old.project_id);
-  return null;
+  if tg_op = 'DELETE' then
+    update public.model_projects set last_edited_at = now() where id = old.project_id;
+  elsif tg_op = 'UPDATE' then
+    update public.model_projects set last_edited_at = now() where id in (new.project_id, old.project_id);
+  else
+    update public.model_projects set last_edited_at = now() where id = new.project_id;
+  end if;
+  return null; -- AFTER trigger: return value is ignored
 end;
 $$;
 

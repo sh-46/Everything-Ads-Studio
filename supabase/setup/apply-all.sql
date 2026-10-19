@@ -248,17 +248,23 @@ create trigger scenes_touch before update on public.scenes
 create trigger export_jobs_touch before update on public.export_jobs
   for each row execute function public.touch_updated_at();
 
--- Runs as the invoking user, so RLS on model_projects still applies.
+-- Runs as the invoking user, so RLS on model_projects still applies. Reads only the row
+-- that exists for the operation: NEW for INSERT/UPDATE, OLD for DELETE (and OLD too when
+-- an UPDATE moves a scene to another project, so both projects are touched).
 create or replace function public.touch_project_from_scene()
 returns trigger
 language plpgsql
 set search_path = ''
 as $$
 begin
-  update public.model_projects
-     set last_edited_at = now()
-   where id = coalesce(new.project_id, old.project_id);
-  return null;
+  if tg_op = 'DELETE' then
+    update public.model_projects set last_edited_at = now() where id = old.project_id;
+  elsif tg_op = 'UPDATE' then
+    update public.model_projects set last_edited_at = now() where id in (new.project_id, old.project_id);
+  else
+    update public.model_projects set last_edited_at = now() where id = new.project_id;
+  end if;
+  return null; -- AFTER trigger: return value is ignored
 end;
 $$;
 
@@ -577,7 +583,6 @@ create table if not exists public.schema_versions (
 alter table public.schema_versions enable row level security;
 revoke all on public.schema_versions from anon, authenticated;
 grant select on public.schema_versions to anon, authenticated;
-drop policy if exists "schema versions are public" on public.schema_versions;
 create policy "schema versions are public" on public.schema_versions
   for select to anon, authenticated using (true);
 

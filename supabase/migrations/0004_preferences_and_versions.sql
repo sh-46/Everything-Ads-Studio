@@ -18,7 +18,6 @@ create table if not exists public.schema_versions (
 alter table public.schema_versions enable row level security;
 revoke all on public.schema_versions from anon, authenticated;
 grant select on public.schema_versions to anon, authenticated;
-drop policy if exists "schema versions are public" on public.schema_versions;
 create policy "schema versions are public" on public.schema_versions
   for select to anon, authenticated using (true);
 

@@ -108,6 +108,21 @@ check("optimistic concurrency: first save wins", cas1.rows.length === 1);
 check("optimistic concurrency: stale revision updates nothing", cas2.rows.length === 0);
 const after = (await one(`select last_edited_at from model_projects where id = $1`, [projA])).last_edited_at;
 check("scene save touches project last_edited_at", after >= before);
+// Trigger on every operation: INSERT, UPDATE and DELETE each touch the project.
+const touched = async (sql, params) => {
+  await db.query(`update model_projects set last_edited_at = '2000-01-01' where id = $1`, [projA]);
+  await db.query(sql, params);
+  return (await one(`select last_edited_at > '2001-01-01' as t from model_projects where id = $1`, [projA])).t;
+};
+check(
+  "scene INSERT touches the project",
+  await touched(
+    `insert into scenes (project_id, workspace_id, name, kind, position, document) values ($1, $2, 'Tmp', 'custom', 99, '{}'::jsonb)`,
+    [projA, wsA],
+  ),
+);
+check("scene UPDATE touches the project", await touched(`update scenes set name = 'Tmp2' where name = 'Tmp'`));
+check("scene DELETE touches the project", await touched(`delete from scenes where name = 'Tmp2'`));
 
 const dup = (await one(`select public.duplicate_model_project($1, 'MDX copy') as id`, [projA])).id;
 check(
@@ -256,6 +271,20 @@ check(
 );
 const viewerUpd = await db.query(`update brands set name = 'hacked' where id = $1 returning id`, [brandA]);
 check("viewer cannot write", viewerUpd.rows.length === 0);
+
+// --- Deleting a project cascades to its scenes; the scene DELETE trigger must not fail.
+await as(A);
+const tmpProject = (
+  await one(
+    `select public.create_model_project($1, $2, 'Delete me', 2026, 'X', '{}'::jsonb, $3::jsonb) as id`,
+    [wsA, brandA, scenesJson],
+  )
+).id;
+check("project deletion cascades through the scene trigger", (await fails(`delete from model_projects where id = $1`, [tmpProject])) === null);
+check(
+  "deleted project's scenes are gone",
+  (await one(`select count(*)::int as n from scenes where project_id = $1`, [tmpProject])).n === 0,
+);
 
 // --- Preferences (0004): own profile only
 await as(A);
