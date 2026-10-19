@@ -80,6 +80,13 @@ export const entranceSchema = z.preprocess(
 );
 
 export const motionConfigSchema = z.object({
+  /**
+   * Static / No Motion: the layer never animates — no entrance, camera motion,
+   * transition or exit, and no easing. When it is on screen is controlled separately
+   * by the layer's visibility timing. Other motion settings are kept, so turning it
+   * off restores them.
+   */
+  static: z.boolean().default(false),
   /** How the start time is derived: scene start, with/after the layer directly below. */
   sequencing: z.enum(SEQUENCING).default("sceneStart"),
   delayMs: z.number().int().min(0).max(60_000).default(0),
@@ -123,6 +130,11 @@ export type EntranceConfig = MotionConfig["entrance"];
 
 export function defaultMotion(): MotionConfig {
   return motionConfigSchema.parse({});
+}
+
+/** Motion for layers that must not move (e.g. disclosures). */
+export function staticMotion(): MotionConfig {
+  return { ...defaultMotion(), static: true };
 }
 
 export function hasEntrance(entrance: EntranceConfig): boolean {

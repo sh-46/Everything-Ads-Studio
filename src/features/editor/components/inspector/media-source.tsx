@@ -26,6 +26,10 @@ export function MediaSource({
   const assets = useEditorStore((s) => s.assets);
   const addAsset = useEditorStore((s) => s.addAsset);
   const updateLayer = useEditorStore((s) => s.updateLayer);
+  const changePhoto = useEditorStore((s) => s.changePhoto);
+  // Photos go through changePhoto so their disclosure follows (with a prompt if needed).
+  const setAsset = (assetId: string | null) =>
+    layer.type === "image" ? changePhoto(layer.id, assetId) : updateLayer(layer.id, { assetId }, `${layer.id}:assetId`);
   const target = useEditorStore((s) => s.uploadTarget) as UploadTarget;
   const [open, setOpen] = useState(false);
   const kind = layer.type === "logo" ? "logo" : "photo";
@@ -65,7 +69,7 @@ export function MediaSource({
           <Button
             variant="ghost"
             size="xs"
-            onClick={() => updateLayer(layer.id, { assetId: null }, `${layer.id}:assetId`)}
+            onClick={() => setAsset(null)}
             title="Unassign from this layer (the file stays in the library)"
           >
             Remove
@@ -83,7 +87,7 @@ export function MediaSource({
         target={kind === "logo" ? { ...target, projectId: null } : target}
         currentAssetId={layer.assetId}
         onUploaded={(uploaded) => uploaded.forEach(addAsset)}
-        onPick={(picked) => updateLayer(layer.id, { assetId: picked.id })}
+        onPick={(picked) => setAsset(picked.id)}
         pickLabel={layer.assetId ? "Replace" : "Use"}
       />
     </Section>

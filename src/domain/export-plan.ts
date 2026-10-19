@@ -1,3 +1,5 @@
+import type { Asset } from "./asset";
+import { disclosureIssues, isDisclosureLayer, type DisclosureIssue } from "./disclosures";
 import type { Scene, SceneKind } from "./scene";
 
 /**
@@ -140,4 +142,33 @@ export function singleExportItem(project: { brandName: string; modelName: string
     height: scene.document.height,
     durationMs: scene.document.durationMs,
   };
+}
+
+export interface SceneDisclosureReview {
+  sceneId: string;
+  sceneName: string;
+  /** Plan items rendered from this scene. */
+  itemKeys: string[];
+  issues: DisclosureIssue[];
+  /** Disclosure layers in the scene (for the "all clear" summary). */
+  disclosures: number;
+}
+
+/** Pre-export disclosure review of every scene in the plan. */
+export function disclosureReview(plan: ExportPlan, scenes: Scene[], assets: Asset[]): SceneDisclosureReview[] {
+  const byId = new Map(assets.map((a) => [a.id, a]));
+  const sceneIds = [...new Set(plan.items.map((i) => i.sceneId))];
+  return sceneIds.flatMap((sceneId) => {
+    const scene = scenes.find((s) => s.id === sceneId);
+    if (!scene) return [];
+    return [
+      {
+        sceneId,
+        sceneName: scene.name,
+        itemKeys: plan.items.filter((i) => i.sceneId === sceneId).map((i) => i.key),
+        issues: disclosureIssues(scene.document, byId),
+        disclosures: scene.document.layers.filter(isDisclosureLayer).length,
+      },
+    ];
+  });
 }

@@ -70,6 +70,8 @@ describe("Konva ↔ CSS geometry consistency", () => {
       visible: true,
       locked: false,
       motion: undefined as never,
+      visibility: undefined as never,
+      disclosure: null,
     });
     expect(style).toMatchObject({
       fontFamily: fontStack("Acura Bespoke"),

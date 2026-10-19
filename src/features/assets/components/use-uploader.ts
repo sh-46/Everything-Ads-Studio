@@ -2,7 +2,8 @@
 
 import { useCallback, useState } from "react";
 import type { Asset, AssetKind, AssetMetadata } from "@/domain/asset";
-import { prepareFile, uploadAsset, type UploadTarget } from "../upload";
+import { prepareFile, uploadAsset, type PreparedFile, type UploadTarget } from "../upload";
+import { askPhotoDisclosures } from "./photo-import";
 
 export interface UploadItem {
   id: string;
@@ -11,32 +12,60 @@ export interface UploadItem {
   error?: string;
 }
 
+type Extra = (file: File) => { displayName?: string | null; metadata?: AssetMetadata };
+
 /**
  * Uploads files one by one, tracking progress and failures. Failed files stay listed
- * with their error until dismissed; successful ones are returned to the caller.
+ * with their error until dismissed; successful ones are returned to the caller. Photos
+ * are validated first, then the user is asked about disclosures for the valid ones.
  */
 export function useUploader(target: UploadTarget) {
   const [items, setItems] = useState<UploadItem[]>([]);
 
   const upload = useCallback(
-    async (
-      files: File[],
-      kind: AssetKind,
-      extra?: (file: File) => { displayName?: string | null; metadata?: AssetMetadata },
-    ): Promise<Asset[]> => {
+    async (files: File[], kind: AssetKind, extra?: Extra): Promise<Asset[]> => {
+      const ids = files.map(() => crypto.randomUUID());
+      setItems((list) => [
+        ...list,
+        ...files.map((file, i) => ({ id: ids[i], name: file.name, status: "uploading" as const })),
+      ]);
+      const fail = (index: number, error: unknown) => {
+        const message = error instanceof Error ? error.message : "Upload failed";
+        setItems((list) => list.map((u) => (u.id === ids[index] ? { ...u, status: "error", error: message } : u)));
+      };
+      const done = (index: number) => setItems((list) => list.filter((u) => u.id !== ids[index]));
+
+      // 1. Validate in the browser (type, size, content).
+      const prepared = await Promise.all(
+        files.map((file, index) =>
+          prepareFile(file, kind).catch((error: unknown) => {
+            fail(index, error);
+            return null;
+          }),
+        ),
+      );
+      const valid = prepared.flatMap((p, index) => (p ? [{ p, index }] : []));
+
+      // 2. Photos: ask for each valid photo's disclosure (cancel = upload none of them).
+      let withMeta = extra;
+      if (kind === "photo" && !extra && valid.length > 0) {
+        const disclosures = await askPhotoDisclosures(valid.map((v) => v.p.file));
+        if (!disclosures) {
+          valid.forEach((v) => done(v.index));
+          return [];
+        }
+        withMeta = (file) => ({ metadata: disclosures[valid.findIndex((v) => v.p.file === file)] ?? {} });
+      }
+
+      // 3. Upload.
       const uploaded: (Asset | null)[] = files.map(() => null);
       await Promise.all(
-        files.map(async (file, index) => {
-          const id = crypto.randomUUID();
-          setItems((list) => [...list, { id, name: file.name, status: "uploading" }]);
+        valid.map(async ({ p, index }: { p: PreparedFile; index: number }) => {
           try {
-            const prepared = await prepareFile(file, kind);
-            const asset = await uploadAsset(kind, prepared, target, extra?.(file));
-            uploaded[index] = asset;
-            setItems((list) => list.filter((u) => u.id !== id));
+            uploaded[index] = await uploadAsset(kind, p, target, withMeta?.(p.file));
+            done(index);
           } catch (error) {
-            const message = error instanceof Error ? error.message : "Upload failed";
-            setItems((list) => list.map((u) => (u.id === id ? { ...u, status: "error", error: message } : u)));
+            fail(index, error);
           }
         }),
       );

@@ -74,8 +74,9 @@ function entranceDuration(layer: Layer): number {
 }
 
 /**
- * Resolves start/end times. "Previous" is the nearest visible layer below in the stack
- * (the next row down in the Layers panel). Hidden layers don't take part in sequencing.
+ * Resolves start/end times. "Previous" is the nearest visible, animated layer below in
+ * the stack (the next row down in the Layers panel). Hidden and static layers don't take
+ * part in sequencing — a static layer (e.g. a disclosure) is simply there, unmoving.
  */
 export function computeSceneTimings(layers: Layer[], sceneDurationMs: number): Map<string, LayerTiming> {
   const timings = new Map<string, LayerTiming>();
@@ -83,6 +84,17 @@ export function computeSceneTimings(layers: Layer[], sceneDurationMs: number): M
   for (const layer of layers) {
     if (!layer.visible) continue;
     const m = layer.motion;
+    if (m.static) {
+      timings.set(layer.id, {
+        start: 0,
+        entranceEnd: 0,
+        exitStart: Infinity,
+        exitEnd: Infinity,
+        continuousStart: 0,
+        continuousEnd: sceneDurationMs,
+      });
+      continue;
+    }
     const base =
       m.sequencing === "withPrevious" && previous
         ? previous.start
@@ -319,7 +331,8 @@ export function evaluateMotion(
   media?: Size | null,
 ): MotionState {
   const state = { ...IDENTITY_MOTION };
-  if (!timing) return state;
+  // Static / No Motion: no entrance, camera motion, transition, exit or easing.
+  if (!timing || layer.motion.static) return state;
   const m = layer.motion;
   if (usesTransition(layer)) applyTransition(state, m, timing, t, layer);
   else applyEntrance(state, m, timing, t);
@@ -342,7 +355,7 @@ export interface SceneTimingIssue {
 
 /** Animation that runs past the end of the scene (it would be cut off). */
 export function timingIssues(layer: Layer, timing: LayerTiming | undefined, sceneDurationMs: number): string[] {
-  if (!timing) return [];
+  if (!timing || layer.motion.static) return [];
   const issues: string[] = [];
   const s = (ms: number) => `${(ms / 1000).toFixed(2)} s`;
   if (timing.start >= sceneDurationMs)

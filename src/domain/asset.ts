@@ -36,6 +36,8 @@ export const LOGO_VARIANTS = ["Primary", "White", "Black", "Horizontal", "Stacke
 
 export const fontStyleSchema = z.enum(["normal", "italic"]);
 
+export const DISCLOSURE_MAX_LENGTH = 600;
+
 export const assetMetadataSchema = z
   .object({
     /** Logos */
@@ -44,10 +46,43 @@ export const assetMetadataSchema = z
     family: z.string().min(1).max(80).optional(),
     weight: z.number().int().min(100).max(900).optional(),
     style: fontStyleSchema.optional(),
+    /**
+     * Photos: whether the photo must carry an on-screen disclosure, and its exact
+     * wording (supplied by the user — never generated). Belongs to the photo, so every
+     * scene using the photo shows the same disclosure.
+     */
+    requiresDisclosure: z.boolean().optional(),
+    disclosureText: z.string().max(DISCLOSURE_MAX_LENGTH).optional(),
   })
   .default({});
 
 export type AssetMetadata = z.infer<typeof assetMetadataSchema>;
+
+export interface PhotoDisclosure {
+  requiresDisclosure: boolean;
+  disclosureText?: string;
+}
+
+/** User-facing problem with a disclosure setting, or null when it can be saved. */
+export function disclosureMetaIssue(value: { requiresDisclosure?: boolean; disclosureText?: string }): string | null {
+  if (!value.requiresDisclosure) return null;
+  const text = value.disclosureText?.trim() ?? "";
+  if (!text) return "Enter the disclosure wording, or turn off “Requires disclosure”.";
+  if (text.length > DISCLOSURE_MAX_LENGTH) return `Keep the disclosure under ${DISCLOSURE_MAX_LENGTH} characters.`;
+  return null;
+}
+
+/** The disclosure a photo requires (trimmed), or null when it needs none. */
+export function photoDisclosureText(asset: Pick<Asset, "metadata"> | null | undefined): string | null {
+  if (!asset?.metadata.requiresDisclosure) return null;
+  const text = asset.metadata.disclosureText?.trim();
+  return text ? text : null;
+}
+
+/** Whether a photo is marked as requiring a disclosure (even if its text is still empty). */
+export function requiresDisclosure(asset: Pick<Asset, "metadata"> | null | undefined): boolean {
+  return Boolean(asset?.metadata.requiresDisclosure);
+}
 
 export const assetSchema = z.object({
   id: z.uuid(),
@@ -123,14 +158,23 @@ export const registerAssetInputSchema = z
     if (v.kind === "font" && !v.metadata.family) {
       ctx.addIssue({ code: "custom", path: ["metadata", "family"], message: "Font family is required." });
     }
+    const disclosureIssue = disclosureMetaIssue(v.metadata);
+    if (disclosureIssue) {
+      ctx.addIssue({ code: "custom", path: ["metadata", "disclosureText"], message: disclosureIssue });
+    }
   });
 
 export type RegisterAssetInput = z.input<typeof registerAssetInputSchema>;
 
-export const assetMetaUpdateSchema = z.object({
-  displayName: z.string().trim().min(1).max(80).nullable().optional(),
-  metadata: assetMetadataSchema.optional(),
-});
+export const assetMetaUpdateSchema = z
+  .object({
+    displayName: z.string().trim().min(1).max(80).nullable().optional(),
+    metadata: assetMetadataSchema.optional(),
+  })
+  .superRefine((v, ctx) => {
+    const issue = v.metadata ? disclosureMetaIssue(v.metadata) : null;
+    if (issue) ctx.addIssue({ code: "custom", path: ["metadata", "disclosureText"], message: issue });
+  });
 export type AssetMetaUpdate = z.infer<typeof assetMetaUpdateSchema>;
 
 const EXTENSIONS: Record<string, string> = {

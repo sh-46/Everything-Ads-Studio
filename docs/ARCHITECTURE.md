@@ -2,7 +2,8 @@
 
 Status: Milestone 1, Phase 2.5 (photo workflow, brand fonts/logos) and Phase 3 (motion
 engine, Remotion preview) and Phase 4 (local production export, Facebook Experience Preview) are
-implemented. Photo disclosures (Phase 4 addendum) are next.
+implemented, plus the Phase 4 final addendum (photo disclosures, Static / No Motion, visibility timing,
+per-scene durations, export benchmarking). Supabase integration testing / Phase 5 are next.
 
 ## 1. Architecture proposal
 
@@ -132,8 +133,9 @@ Deferred: `@playwright/test`
 (once a test Supabase project exists; browser checks currently run as ad-hoc scripts).
 
 **Remotion licence:** Remotion is free for individuals and companies of up to 3 people; larger
-companies need a company licence. `acknowledgeRemotionLicense` is deliberately **not** set — that is a
-decision for the account owner.
+companies need a company licence. Treated as a personal, independently developed project for now; the owner
+verifies the terms before any commercial use or deployment. No licence key is set and nothing is
+acknowledged on the owner's behalf.
 
 ## 5. Milestones
 
@@ -200,7 +202,7 @@ Export page / editor menu ──POST /api/exports {projectId, sceneId?}──▶
    │                                                                     ├─ inputs.ts: validate scene, resolve asset/font URLs, cache key
    └── GET /api/exports/:id/download[?item=key] (owner-checked)          ├─ renderer.ts: bundle src/remotion once per code version,
                                                                          │    renderMedia (MP4) / renderStill (CTA PNG), verify output
-                                                                         └─ fflate: stream files into the ZIP (stored)
+                                                                         └─ zip.ts: stream files into the ZIP (stored), verify CRCs
 ```
 
 - `src/remotion/` registers one `Scene` composition whose size/duration come from the document. It renders
@@ -210,7 +212,41 @@ Export page / editor menu ──POST /api/exports {projectId, sceneId?}──▶
 - `src/domain/export-plan.ts` decides the package contents and file names (sanitized, unique);
   `src/domain/export-settings.ts` holds the MP4 settings (H.264 High, level by size, yuv420p, CFR 30, 5 Mbps
   target with 6 Mbps VBV cap).
-- Cache key: sha256 of render version + settings + document + used assets (stable URL, size) + fonts.
+- Cache key: sha256 of render version + settings + document + used assets (stable URL, size, disclosure
+  wording) + fonts.
+- One Chrome per job (`openBrowser`, passed as `puppeteerInstance` to `selectComposition`/`renderMedia`/
+  `renderStill`), released at the end or after a failure. Tunables read per render: `EXPORT_CONCURRENCY`,
+  `EXPORT_GL`, `EXPORT_REUSE_BROWSER` (see _Export performance_).
+- Progress is weighted by frames (PNG ≈ 6 frames); the ETA divides remaining work by this job's measured
+  throughput (rendered work only — reused files would skew it). Each item records `renderMs`, frames and fps;
+  every render is logged as `[export] …` on the server.
+
+### Export performance
+
+Benchmarked with `EXPORT_GL` / `EXPORT_CONCURRENCY` / `EXPORT_REUSE_BROWSER` on an M2 Pro (table in the README).
+Software GL (`swangle`) capped rendering at ~3.8 fps regardless of tabs; Chrome's GPU backend (`angle`, Metal)
+reaches ~15.5 fps with a single tab (more tabs contend for the GPU). Default: `angle` × 1 with an automatic
+per-file retry on `swangle`. Full package: 1,710 frames in ~106 s (previously ≈ 7.5 min for the same work).
+
+### Disclosures, visibility and static motion
+
+```
+asset.metadata { requiresDisclosure, disclosureText }      ← single source of truth (per photo)
+text layer.disclosure { assetId, imageLayerId }           ← link; text resolved at render time
+layer.visibility { mode: always | range | linkedPhoto }    ← when (visibility.ts), independent of…
+layer.motion.static                                         ← …how (motion-engine.ts: identity motion)
+```
+
+- `src/domain/disclosures.ts` — create/ensure (no duplicates, safe area, clear of copy), photo-change plans
+  (relink / add / remove / keep as text, with the question to ask), library sync, quality checks and quick
+  fixes. Used by the editor store, the Scenes Overview server actions, the export page and the job runner.
+- `src/domain/visibility.ts` — visibility windows. `linkedPhoto` follows the photo frame: from its start (or
+  the middle of its incoming transition) to its exit, or to the middle of Photo 2's transition for Photo 1.
+  `hiddenInStaticLayout` keeps only Photo 2's disclosure in the static layout (CTA PNG, editor default).
+- `src/domain/text-layout.ts` — word wrapping for the checks: canvas measurement in the browser, a slightly
+  generous estimate on the server.
+- `SceneLayers` (preview + export) skips layers outside their window and renders `resolveLayerText`; the
+  Konva editor resolves the same text and marks disclosures (amber outline, safe-area guide when selected).
 - Reliability: same request while active → same job; watchdog cancels a render with no progress for 90 s;
   temp files are renamed into place only after verification; old jobs/cache are cleaned on each run.
 - Replaceable later by a worker host consuming `export_jobs` behind the same API routes.

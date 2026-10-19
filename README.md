@@ -23,7 +23,7 @@ Milestone 1 (vertical slice) plus **Phase 2.5 (photo workflow, Brand Kit fonts &
 | Scene duplication                                                                                                                                                                               | Built                  |
 | Multi-select, snapping, workspace invites                                                                                                                                                       | Not started            |
 | Export: Creative Package ZIP (Motion Tile + Facebook Build), single-scene MP4/PNG, job progress, retry, render cache                                                                            | Built (local renderer) |
-| Photo disclosures (addendum)                                                                                                                                                                    | Next                   |
+| Photo disclosures (per-photo wording, static disclosure layers, two-photo hand-over, quality checks, pre-export review); visibility timing; Static / No Motion; per-scene durations             | Built                  |
 | Copy Assistant                                                                                                                                                                                  | Phase 5                |
 
 ## Setup
@@ -137,7 +137,12 @@ Facebook_Build/06_CTA_1080x300.png
 - **Browser:** uses `/Applications/Google Chrome.app` when present (Remotion's downloaded headless shell did not
   start on this macOS). Override with `REMOTION_BROWSER_EXECUTABLE=/path/to/chrome`, or `headless-shell` to
   use Remotion's own.
-- Rendering takes roughly 45–60 s per 6-second 1080×1920 scene on this machine; a full package ≈ 5 min.
+- **Performance:** see _Export performance_ below. Progress is weighted by frames (a 10 s scene counts more than
+  a PNG), each file shows its render time and fps, and the package shows a time-remaining estimate measured from
+  the current job.
+- **ZIP integrity:** files are written to the ZIP strictly in order and every entry is re-read and compared
+  (size + CRC-32) with its rendered file before "Ready to download". (Fixes a Phase 4 bug where concurrent
+  writes could corrupt large entries.)
 - No database migration: the existing `export_jobs` table is unused for now (jobs are local and in memory).
 - Works in Demo Mode (no Supabase).
 
@@ -146,11 +151,82 @@ Motion Tile. **Learn More** opens the Facebook Build in the phone (Intro → Ext
 Outro + CTA stacked); scroll through it, then **Back** returns to the same place in the feed. It's an internal
 simulation and is never part of an export.
 
-**Remotion licence — needs your review.** Remotion (player, bundler, renderer) is source-available, not
-open source. Its licence is free for individuals and for companies of up to 3 employees, including
-commercial use; larger organizations need a paid company licence. This project is described as personal and
-non-commercial, but it runs under a work account (`helloconstellation.com`), so please confirm which case
-applies. No licence key is set (`licenseKey: null`) and nothing is acknowledged on your behalf.
+**Remotion licence.** Remotion (player, bundler, renderer) is source-available, not open source: free for
+individuals and companies of up to 3 employees, a paid company licence above that. This is treated as a
+personal, independently developed project for now; the owner will verify the applicable terms before any
+commercial use or deployment. No licence key is set (`licenseKey: null`) and nothing is acknowledged on the
+owner's behalf.
+
+## Photo disclosures
+
+A disclosure belongs to a **photo**, not a scene: set it when importing photos (every upload asks "Requires
+disclosure?" and, if so, for the exact wording) or later from the photo library (Scenes Overview tiles or the
+editor's Assets tab → _Photo disclosure…_). The app never suggests or writes wording.
+
+- **Disclosure layers.** Placing a photo that requires a disclosure adds one disclosure layer for that frame
+  (never a duplicate): static (no motion), brand body typeface, bottom of the safe area and clear of other
+  copy. It's marked in amber on the canvas and in the Layers list. Its text always comes from the photo, so
+  editing the wording in the library updates every scene (boxes grow if the new wording needs more room).
+  Style, size and position are per scene.
+- **Two photos.** In a Photo 1 → Photo 2 transition each photo keeps its own disclosure. They share a position
+  and hand over at the middle of the transition (at the cut for "Cut"), so one is always shown and they never
+  overlap.
+- **Replace / remove / delete.** Changing a photo that affects a disclosure asks first: update it to the new
+  photo's wording, remove it, keep it as plain text, or add one — never silently.
+- **Checks** (live in the editor, again before export): missing, hidden, not on screen while its photo is,
+  clipped at the scene edge, outside the safe area, text overflowing its box, overlapping other copy, too small
+  (< 18 px per 1080 px of width), or a photo marked as requiring a disclosure without wording. Quick fixes: Add
+  disclosure, Show it, Fit box to text, Move into safe area. The export page lists every problem and asks for
+  an explicit "export anyway"; each affected file carries the warning too.
+- **Safe area:** 9:16 scenes keep 14 % top / 20 % bottom / 6 % sides clear (Meta's Stories/Reels guidance);
+  1080×1620 Outro 6 % / 4 %; other sizes 5 %.
+- Stored in the photo's `metadata` (`requiresDisclosure`, `disclosureText`) and the layer's `disclosure` link —
+  JSONB fields that already exist, so **no database migration**.
+
+## Motion: Static / No Motion and visibility timing
+
+- **Static / No Motion** (top of the Motion section) turns off entrance, camera motion, transition, exit and
+  easing for a layer; the other settings are kept for when it's turned off. Static layers don't take part in
+  "With/After previous" sequencing.
+- **Visibility** (its own inspector section) says _when_ a layer is on screen, independent of _how_ it moves:
+  Whole scene, Custom time range (hard cuts), or — for disclosures — While its photo is on screen.
+
+## Scene durations
+
+Each scene has its own length (Scene inspector → Duration, with 5/6/7/10/15 s quick picks); exports use it
+exactly. New Motion Tiles start at **7 s** and new Facebook Build scenes (Intro, Exterior, Interior,
+Performance, Outro) at **10 s**; existing scenes keep their saved duration. Exits "at scene end" and
+full-length camera motion follow the length automatically; the timing overview warns about anything that runs
+past the end.
+
+## Export performance
+
+Measured on this machine (Apple M2 Pro, 12 cores, Demo Mode), 10 s 1080×1920 Intro (300 frames), render cache
+cleared, `[export]` server log:
+
+| Chrome GL backend       | Parallel tabs                     | Render time | Frames/s |
+| ----------------------- | --------------------------------- | ----------- | -------- |
+| swangle (software)      | 3 (old default, browser per call) | 78.8 s      | 3.8      |
+| swangle                 | 3 (shared browser)                | 80.2 s      | 3.7      |
+| swangle                 | 6                                 | 90.5 s      | 3.3      |
+| swangle                 | 8                                 | 94.2 s      | 3.2      |
+| angle (GPU / Metal)     | 6                                 | 31.0 s      | 9.7      |
+| angle                   | 4                                 | 29.6 s      | 10.1     |
+| angle                   | 3                                 | 27.8 s      | 10.8     |
+| angle                   | 2                                 | 22.5 s      | 13.4     |
+| **angle (new default)** | **1**                             | **19.4 s**  | **15.5** |
+
+- **Optimizations applied:** GPU rendering (`angle`) with one tab — software GL was the bottleneck and extra
+  tabs only add contention; one shared Chrome per export job instead of one per file/step.
+- **Full Creative Package** (Motion Tile 7 s + five 10 s Build scenes + CTA = 1,710 frames): **106 s**,
+  repeatable (106.9 s / 106.2 s, 15–16 fps per scene). The old settings would need ≈ 7.5 min for the same work.
+- **Same output:** GPU vs software frames differ only at codec-noise level (PSNR 48–53 dB). If a GPU render
+  fails, that file is retried automatically with software GL (verified by fault injection) and flagged.
+- **Progress & ETA:** progress grows linearly (~0.9 %/s on the package) and the time-left estimate converged on
+  the real finish (107 s) within a few seconds after the first scene.
+- **Tune:** `EXPORT_GL` (`angle` | `swangle` | `swiftshader`), `EXPORT_CONCURRENCY`, `EXPORT_REUSE_BROWSER=0`.
+  Other machines (e.g. without a usable GPU) may prefer `EXPORT_GL=swangle EXPORT_CONCURRENCY=3`.
+- Export standards are unchanged: H.264 High, constant 30 fps, yuv420p, 5 Mbps target, scene size and length.
 
 ## Scripts
 

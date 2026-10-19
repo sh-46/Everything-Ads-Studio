@@ -31,7 +31,7 @@ import {
   type LayerTiming,
 } from "@/domain/motion-engine";
 import type { ImageLayer, Layer } from "@/domain/scene";
-import { assignScenePhoto, photoPair } from "@/domain/scene-photos";
+import { photoPair } from "@/domain/scene-photos";
 import { AssetPickerDialog, AssetThumb } from "@/features/assets/components/asset-picker-dialog";
 import type { UploadTarget } from "@/features/assets/upload";
 import { useActiveScene, useEditorStore } from "../../store/editor-store";
@@ -86,6 +86,34 @@ export function MotionSection({ layer }: { layer: Layer }) {
   ) => setMotion({ [key]: { ...target.motion[key], ...patch } } as Partial<MotionConfig>, `${key}.${field}`, target);
 
   if (!doc) return null;
+
+  const staticToggle = (
+    <label className="flex items-center justify-between gap-2 text-xs" title="No entrance, camera motion or exit">
+      <span>
+        <span className="font-medium">Static / No Motion</span>
+        <span className="text-muted-foreground block text-[11px]">
+          The layer never moves; Visibility sets when it shows.
+        </span>
+      </span>
+      <input
+        type="checkbox"
+        checked={m.static}
+        onChange={(e) => setMotion({ static: e.target.checked }, "static")}
+        data-testid="motion-static"
+      />
+    </label>
+  );
+  if (m.static) {
+    return (
+      <Section title="Motion">
+        <div data-testid="motion-inspector">{staticToggle}</div>
+        <Hint>
+          No entrance, camera motion, transition, exit or easing. Your previous motion settings are kept and come back
+          if you turn this off.
+        </Hint>
+      </Section>
+    );
+  }
   const timing = timings.get(layer.id);
   const photo2Timing = pair.photo2 ? timings.get(pair.photo2.id) : undefined;
   const transitionWindow =
@@ -112,6 +140,7 @@ export function MotionSection({ layer }: { layer: Layer }) {
       }
     >
       <div className="space-y-2" data-testid="motion-inspector">
+        {staticToggle}
         <SelectField
           wide
           label="Starts"
@@ -562,10 +591,8 @@ function PhotoTransition({
 }) {
   const assets = useEditorStore((s) => s.assets);
   const addAsset = useEditorStore((s) => s.addAsset);
-  const kit = useEditorStore((s) => s.kit);
   const target = useEditorStore((s) => s.uploadTarget) as UploadTarget;
-  const mutateScene = useEditorStore((s) => s.mutateScene);
-  const activeSceneId = useEditorStore((s) => s.activeSceneId);
+  const assignSlotPhoto = useEditorStore((s) => s.assignSlotPhoto);
   const [pickerOpen, setPickerOpen] = useState(false);
 
   if (!photo2) {
@@ -593,9 +620,7 @@ function PhotoTransition({
           assets={assets}
           target={target}
           onUploaded={(uploaded) => uploaded.forEach(addAsset)}
-          onPick={(asset) =>
-            mutateScene(activeSceneId, (s) => ({ ...s, document: assignScenePhoto(s.document, 2, asset.id, kit) }))
-          }
+          onPick={(asset) => assignSlotPhoto(2, asset.id)}
           pickLabel="Add as Photo 2"
         />
       </MotionGroup>

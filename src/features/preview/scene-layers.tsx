@@ -2,7 +2,9 @@ import { createContext, useContext, useMemo, useState } from "react";
 import { Img } from "remotion";
 import type { Asset } from "@/domain/asset";
 import { computeSceneTimings, evaluateMotion, IDENTITY_MOTION } from "@/domain/motion-engine";
+import { resolveLayerText } from "@/domain/disclosures";
 import type { ImageLayer, Layer, LogoLayer, SceneDocument } from "@/domain/scene";
+import { computeVisibility, hiddenInStaticLayout, isVisibleAt } from "@/domain/visibility";
 import {
   contentOriginCss,
   contentTransform,
@@ -37,6 +39,9 @@ export function SceneLayers({
   offsetY?: number;
 }) {
   const timings = useMemo(() => computeSceneTimings(doc.layers, doc.durationMs), [doc.layers, doc.durationMs]);
+  // When each layer is on screen — separate from how it moves.
+  const windows = useMemo(() => computeVisibility(doc, timings), [doc, timings]);
+  const hiddenStatic = useMemo(() => hiddenInStaticLayout(doc), [doc]);
   const assetsById = useMemo(() => new Map(assets.map((a) => [a.id, a])), [assets]);
 
   return (
@@ -53,6 +58,7 @@ export function SceneLayers({
     >
       {doc.layers.map((layer) => {
         if (!layer.visible) return null;
+        if (timeMs === null ? hiddenStatic.has(layer.id) : !isVisibleAt(windows.get(layer.id), timeMs)) return null;
         const asset = "assetId" in layer && layer.assetId ? assetsById.get(layer.assetId) : undefined;
         const media = asset?.width && asset.height ? { width: asset.width, height: asset.height } : null;
         const m = timeMs === null ? IDENTITY_MOTION : evaluateMotion(layer, timings.get(layer.id), timeMs, media);
@@ -64,6 +70,7 @@ export function SceneLayers({
             data-layer-id={layer.id}
             data-layer-type={layer.type}
             data-layer-role={layer.role}
+            data-disclosure-for={layer.type === "text" ? layer.disclosure?.imageLayerId : undefined}
             style={{
               position: "absolute",
               left: layer.x,
@@ -95,7 +102,7 @@ function LayerContent({
 }) {
   switch (layer.type) {
     case "text":
-      return <p style={textStyle(layer)}>{layer.text}</p>;
+      return <p style={textStyle(layer)}>{resolveLayerText(layer, assetsById)}</p>;
     case "gradient":
       return <div style={{ width: "100%", height: "100%", background: gradientCss(layer.fill) }} />;
     case "shape":

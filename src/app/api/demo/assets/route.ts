@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
-import { ASSET_KINDS, assetMetadataSchema } from "@/domain/asset";
+import { ASSET_KINDS, assetMetadataSchema, disclosureMetaIssue } from "@/domain/asset";
 import { isDemoMode } from "@/lib/demo/mode";
 import { demoAddAsset } from "@/lib/demo/store";
 import { readDemoFile } from "./demo-file";
@@ -33,6 +33,8 @@ export async function POST(request: NextRequest) {
   }
   if (kind === "font" && !metadata.family)
     return NextResponse.json({ error: "Font family is required." }, { status: 400 });
+  const disclosureIssue = disclosureMetaIssue(metadata);
+  if (disclosureIssue) return NextResponse.json({ error: disclosureIssue }, { status: 400 });
 
   const result = await readDemoFile(form, kind);
   if ("error" in result) return NextResponse.json({ error: result.error }, { status: result.status });

@@ -1,6 +1,6 @@
 "use client";
 
-import { ImagePlus, MoreHorizontal, Replace, Trash2 } from "lucide-react";
+import { ImagePlus, MoreHorizontal, Replace, ShieldCheck, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 import { cn } from "cn";
@@ -18,6 +18,7 @@ import { FileDropZone, UploadQueue } from "@/features/assets/components/upload-w
 import { useUploader } from "@/features/assets/components/use-uploader";
 import type { UploadTarget } from "@/features/assets/upload";
 import { useInsertMedia } from "../hooks/use-insert-media";
+import { usePhotoDisclosureEditor } from "./inspector/disclosure-section";
 import { useEditorStore, useSelectedLayer } from "../store/editor-store";
 
 type Tab = "photos" | "logos";
@@ -32,19 +33,20 @@ export function AssetLibrary({ target, demoMode }: { target: UploadTarget; demoM
   const addAsset = useEditorStore((s) => s.addAsset);
   const removeAsset = useEditorStore((s) => s.removeAsset);
   const updateLayer = useEditorStore((s) => s.updateLayer);
+  const changePhoto = useEditorStore((s) => s.changePhoto);
   const selected = useSelectedLayer();
   const { insertPhoto, insertLogo } = useInsertMedia();
   const { items, upload, dismiss, busy } = useUploader(target);
   const [tab, setTab] = useState<Tab>("photos");
   const [deleting, setDeleting] = useState<Asset | null>(null);
+  const disclosureEditor = usePhotoDisclosureEditor();
 
   const photos = assets.filter((a) => a.kind === "photo");
   const logos = assets.filter((a) => a.kind === "logo");
   const canReplacePhoto = selected?.type === "image";
   const canReplaceLogo = selected?.type === "logo";
 
-  const placePhoto = (asset: Asset) =>
-    canReplacePhoto ? updateLayer(selected.id, { assetId: asset.id }) : insertPhoto(asset);
+  const placePhoto = (asset: Asset) => (canReplacePhoto ? changePhoto(selected.id, asset.id) : insertPhoto(asset));
   const placeLogo = (asset: Asset) =>
     canReplaceLogo ? updateLayer(selected.id, { assetId: asset.id }) : insertLogo(asset);
 
@@ -131,6 +133,15 @@ export function AssetLibrary({ target, demoMode }: { target: UploadTarget; demoM
                 >
                   <AssetThumb asset={asset} />
                 </button>
+                {tab === "photos" && asset.metadata.requiresDisclosure && (
+                  <span
+                    className="absolute bottom-5 left-1 flex items-center gap-0.5 rounded bg-amber-400 px-1 text-[9px] font-semibold text-amber-950"
+                    title={asset.metadata.disclosureText ?? "Requires disclosure"}
+                    data-testid="photo-disclosure-badge"
+                  >
+                    <ShieldCheck className="size-2.5" aria-hidden /> Disclosure
+                  </span>
+                )}
                 <DropdownMenu>
                   <DropdownMenuTrigger
                     className="bg-background/90 absolute top-1 right-1 rounded p-0.5 opacity-0 shadow-sm group-hover:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100"
@@ -143,8 +154,22 @@ export function AssetLibrary({ target, demoMode }: { target: UploadTarget; demoM
                       <ImagePlus /> Add as new layer
                     </DropdownMenuItem>
                     {canReplace && selected && (
-                      <DropdownMenuItem onSelect={() => updateLayer(selected.id, { assetId: asset.id })}>
+                      <DropdownMenuItem
+                        onSelect={() =>
+                          tab === "photos"
+                            ? changePhoto(selected.id, asset.id)
+                            : updateLayer(selected.id, { assetId: asset.id })
+                        }
+                      >
                         <Replace /> Replace in selected layer
+                      </DropdownMenuItem>
+                    )}
+                    {tab === "photos" && (
+                      <DropdownMenuItem
+                        onSelect={() => disclosureEditor.open(asset)}
+                        data-testid="photo-disclosure-menu"
+                      >
+                        <ShieldCheck /> Photo disclosure…
                       </DropdownMenuItem>
                     )}
                     <DropdownMenuSeparator />
@@ -167,6 +192,7 @@ export function AssetLibrary({ target, demoMode }: { target: UploadTarget; demoM
       )}
 
       <DeleteAssetDialog asset={deleting} onOpenChange={(o) => !o && setDeleting(null)} onDeleted={removeAsset} />
+      {disclosureEditor.dialog}
     </div>
   );
 }

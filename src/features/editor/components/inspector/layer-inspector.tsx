@@ -26,6 +26,7 @@ function brandFamilyNames(assets: Asset[]): string[] {
 }
 import type { LayerPatch, SceneAlignment } from "../../store/layer-ops";
 import { useEditorStore } from "../../store/editor-store";
+import { DisclosureSection, VisibilitySection } from "./disclosure-section";
 import { MediaSource } from "./media-source";
 import { MotionSection } from "./motion-section";
 import { ColorField, FieldRow, NumberField, RangeField, Section, SelectField } from "@/components/fields";
@@ -130,6 +131,7 @@ export function LayerInspector({ layer }: { layer: Layer }) {
         </MediaSource>
       )}
 
+      <VisibilitySection layer={layer} />
       <MotionSection layer={layer} />
     </div>
   );
@@ -161,15 +163,19 @@ function TextSection({ layer, update }: { layer: TextLayer; update: Update }) {
   };
   return (
     <>
-      <Section title="Text">
-        <Textarea
-          id="inspector-text-content"
-          aria-label="Text content"
-          className="min-h-20 text-xs"
-          value={layer.text}
-          onChange={(e) => update({ text: e.target.value }, "text")}
-        />
-      </Section>
+      {layer.disclosure ? (
+        <DisclosureSection layer={layer} />
+      ) : (
+        <Section title="Text">
+          <Textarea
+            id="inspector-text-content"
+            aria-label="Text content"
+            className="min-h-20 text-xs"
+            value={layer.text}
+            onChange={(e) => update({ text: e.target.value }, "text")}
+          />
+        </Section>
+      )}
       <Section
         title="Typography"
         aside={

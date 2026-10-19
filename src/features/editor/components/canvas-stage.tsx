@@ -2,9 +2,12 @@
 
 import type Konva from "konva";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Group, Layer as KonvaLayer, Rect, Stage, Transformer } from "react-konva";
+import { Group, Layer as KonvaLayer, Rect, Stage, Text as KonvaText, Transformer } from "react-konva";
+import { disclosureLayersFor, isDisclosureLayer, safeArea } from "@/domain/disclosures";
 import { fitScale } from "@/domain/geometry";
-import type { ImageLayer, Layer } from "@/domain/scene";
+import type { ImageLayer, Layer, SceneDocument } from "@/domain/scene";
+import { photoPair } from "@/domain/scene-photos";
+import { hiddenInStaticLayout } from "@/domain/visibility";
 import { UploadQueue } from "@/features/assets/components/upload-widgets";
 import { useUploader } from "@/features/assets/components/use-uploader";
 import type { UploadTarget } from "@/features/assets/upload";
@@ -14,6 +17,83 @@ import { FocusOverlay } from "./layers/focus-overlay";
 import { GradientNode, ImageNode, LogoNode, ShapeNode, TextNode } from "./layers/layer-nodes";
 
 const PADDING = 48;
+
+/**
+ * The canvas shows the static layout. In a Photo 1 → Photo 2 pair the two disclosures
+ * share a position (they hand over mid-transition), so only one is drawn: Photo 1's
+ * while Photo 1 or its disclosure is selected, otherwise Photo 2's (on top).
+ */
+function editorHiddenLayers(doc: SceneDocument, selectedLayerId: string | null): Set<string> {
+  const { photo1, photo2 } = photoPair(doc);
+  if (!photo1 || !photo2) return hiddenInStaticLayout(doc);
+  const selected = doc.layers.find((l) => l.id === selectedLayerId);
+  const photo1Focused =
+    selected?.id === photo1.id || (selected?.type === "text" && selected.disclosure?.imageLayerId === photo1.id);
+  if (!photo1Focused) return hiddenInStaticLayout(doc);
+  return new Set(disclosureLayersFor(doc, photo2.id).map((l) => l.id));
+}
+
+const DISCLOSURE_COLOR = "#F59E0B";
+
+/** Disclosure layers are marked on the canvas (amber outline + tag); the safe area shows while one is selected. */
+function DisclosureGuides({
+  doc,
+  hidden,
+  selectedLayerId,
+  scale,
+}: {
+  doc: SceneDocument;
+  hidden: Set<string>;
+  selectedLayerId: string | null;
+  scale: number;
+}) {
+  const disclosures = doc.layers.filter((l) => isDisclosureLayer(l) && l.visible && !hidden.has(l.id));
+  if (disclosures.length === 0) return null;
+  const showSafe = disclosures.some((l) => l.id === selectedLayerId);
+  const safe = safeArea(doc);
+  return (
+    <Group listening={false}>
+      {showSafe && (
+        <Rect
+          {...safe}
+          stroke={DISCLOSURE_COLOR}
+          strokeWidth={1}
+          strokeScaleEnabled={false}
+          dash={[6 / scale, 6 / scale]}
+          opacity={0.6}
+        />
+      )}
+      {disclosures.map((l) => (
+        <Group key={l.id} x={l.x} y={l.y} rotation={l.rotation}>
+          <Rect
+            width={l.width}
+            height={l.height}
+            stroke={DISCLOSURE_COLOR}
+            strokeWidth={1.5}
+            strokeScaleEnabled={false}
+            dash={[4 / scale, 3 / scale]}
+          />
+          <Rect
+            y={-18 / scale}
+            width={86 / scale}
+            height={16 / scale}
+            fill={DISCLOSURE_COLOR}
+            cornerRadius={3 / scale}
+          />
+          <KonvaText
+            y={-16.5 / scale}
+            x={5 / scale}
+            text="DISCLOSURE"
+            fontSize={11 / scale}
+            fontStyle="600"
+            fontFamily="Helvetica Neue, Arial, sans-serif"
+            fill="#1F1300"
+          />
+        </Group>
+      ))}
+    </Group>
+  );
+}
 const MIN_SIZE = 4;
 
 function LayerContent({ layer }: { layer: Layer }) {
@@ -87,6 +167,7 @@ export default function CanvasStage() {
   }, [canTransform, selectedLayerId, doc, focusLayer]);
 
   if (!scene || !doc) return <div ref={viewportRef} className="h-full w-full" />;
+  const editorHidden = editorHiddenLayers(doc, selectedLayerId);
 
   const scale = zoom === "fit" ? fitScale(doc, viewport, PADDING) : Math.max(0.05, Math.min(4, zoom));
   const contentWidth = doc.width * scale;
@@ -192,7 +273,7 @@ export default function CanvasStage() {
                     y={layer.y}
                     rotation={layer.rotation}
                     opacity={layer.opacity}
-                    visible={layer.visible}
+                    visible={layer.visible && !editorHidden.has(layer.id)}
                     listening={!layer.locked}
                     draggable={!layer.locked && layer.id !== focusEditLayerId}
                     onMouseDown={(e) => {
@@ -210,6 +291,7 @@ export default function CanvasStage() {
                   </Group>
                 ))}
               </Group>
+              <DisclosureGuides doc={doc} hidden={editorHidden} selectedLayerId={selectedLayerId} scale={scale} />
               {focusLayer && (
                 <FocusOverlay
                   layer={focusLayer}

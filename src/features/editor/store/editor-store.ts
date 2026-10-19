@@ -1,7 +1,25 @@
 "use client";
 
 import { create } from "zustand";
-import type { Asset } from "@/domain/asset";
+import { requiresDisclosure, type Asset } from "@/domain/asset";
+import {
+  applyDisclosureDecision,
+  detachDisclosures,
+  disclosureLayersFor,
+  ensureDisclosureLayer,
+  fitDisclosureHeight,
+  moveIntoSafeArea,
+  planLayerRemoval,
+  planPhotoChange,
+  removeLayers,
+  syncDisclosuresForAsset,
+  type DisclosureDecision,
+  type DisclosureIssue,
+  type PhotoChangePlan,
+} from "@/domain/disclosures";
+import { fontStack } from "@/domain/fonts";
+import { assignScenePhoto, photoPair, type PhotoSlot } from "@/domain/scene-photos";
+import { canvasMeasure, type MeasureText } from "@/domain/text-layout";
 import type { UploadTarget } from "@/features/assets/upload";
 import { computeSceneTimings } from "@/domain/motion-engine";
 import type { MotionPreset } from "@/domain/motion-presets";
@@ -22,6 +40,16 @@ export type ZoomMode = "fit" | number;
 
 /** "edit" shows the Konva canvas; "preview" plays the scene with Remotion. */
 export type CanvasMode = "edit" | "preview";
+
+/** A photo change waiting for the user's answer about its disclosure. */
+export interface PendingPhotoChange {
+  sceneId: string;
+  kind: "photo" | "remove";
+  layerId: string;
+  /** New photo for kind "photo" (null = remove the photo from the frame). */
+  assetId: string | null;
+  plan: PhotoChangePlan;
+}
 
 export interface SaveIssue {
   error?: string;
@@ -54,6 +82,7 @@ interface EditorState {
   /** Brand font load state by family, and a counter that changes as fonts finish loading. */
   fontStatus: Record<string, "loading" | "loaded" | "error">;
   fontsVersion: number;
+  pendingPhotoChange: PendingPhotoChange | null;
 
   init(input: {
     projectId: string;
@@ -76,7 +105,21 @@ interface EditorState {
   ): void;
   updateLayer(layerId: string, patch: ops.LayerPatch, coalesceKey?: string): void;
   addLayer(layer: Layer): void;
+  /** Deletes a layer; a photo with a disclosure asks first (see `pendingPhotoChange`). */
   removeLayer(layerId: string): void;
+  /**
+   * Put a photo in (or remove it from) an image frame. If its disclosure changes, the
+   * user is asked first; otherwise it applies at once. One undo step either way.
+   */
+  changePhoto(layerId: string, assetId: string | null): void;
+  /** Answer the pending question (null = cancel the change). */
+  resolvePhotoChange(decision: DisclosureDecision | null): void;
+  /** Assign a scene photo slot (Photo 2 transitions), adding its disclosure if required. */
+  assignSlotPhoto(slot: PhotoSlot, assetId: string): void;
+  /** Apply a disclosure quick fix in the active scene. */
+  fixDisclosure(issue: DisclosureIssue): void;
+  /** After a photo's disclosure changed in the library: update every scene using it. */
+  syncAssetDisclosures(asset: Asset): { added: number; removed: number };
   duplicateLayer(layerId: string): void;
   reorderLayer(layerId: string, direction: ops.ReorderDirection): void;
   moveLayer(layerId: string, targetIndex: number): void;
@@ -139,6 +182,7 @@ export const useEditorStore = create<EditorState>()((set, get) => ({
   motionPresets: [],
   fontStatus: {},
   fontsVersion: 0,
+  pendingPhotoChange: null,
 
   init({ projectId, brandId, kit, assets, scenes, uploadTarget, motionPresets = [] }) {
     const ordered = [...scenes].sort((a, b) => a.position - b.position);
@@ -160,6 +204,7 @@ export const useEditorStore = create<EditorState>()((set, get) => ({
       focusEditLayerId: null,
       uploadTarget,
       motionPresets,
+      pendingPhotoChange: null,
     });
   },
 
@@ -201,15 +246,109 @@ export const useEditorStore = create<EditorState>()((set, get) => ({
   },
 
   addLayer(layer) {
-    const { activeSceneId, mutateScene } = get();
-    mutateScene(activeSceneId, (s) => ({ ...s, document: ops.addLayer(s.document, layer) }));
+    const { activeSceneId, mutateScene, kit } = get();
+    const assets = assetMap(get().assets);
+    mutateScene(activeSceneId, (s) => {
+      let document = ops.addLayer(s.document, layer);
+      // A new photo frame gets its photo's disclosure automatically.
+      const asset = layer.type === "image" && layer.assetId ? assets.get(layer.assetId) : undefined;
+      if (asset && requiresDisclosure(asset)) {
+        document = ensureDisclosureLayer(document, layer.id, asset, kit, measurer());
+      }
+      return { ...s, document };
+    });
     set({ selectedLayerId: layer.id });
   },
 
   removeLayer(layerId) {
-    const { activeSceneId, mutateScene, selectedLayerId } = get();
-    mutateScene(activeSceneId, (s) => ({ ...s, document: ops.removeLayer(s.document, layerId) }));
-    if (selectedLayerId === layerId) set({ selectedLayerId: null });
+    const { activeSceneId, scenes } = get();
+    const doc = scenes[activeSceneId]?.document;
+    if (!doc) return;
+    const plan = planLayerRemoval(doc, layerId);
+    if (plan.prompt) {
+      set({ pendingPhotoChange: { sceneId: activeSceneId, kind: "remove", layerId, assetId: null, plan } });
+      return;
+    }
+    commitRemoval(activeSceneId, layerId, plan, "apply");
+  },
+
+  changePhoto(layerId, assetId) {
+    const { activeSceneId, scenes, assets } = get();
+    const doc = scenes[activeSceneId]?.document;
+    if (!doc) return;
+    const byId = assetMap(assets);
+    const plan = planPhotoChange(doc, layerId, assetId ? (byId.get(assetId) ?? null) : null, byId);
+    if (plan.prompt) {
+      set({ pendingPhotoChange: { sceneId: activeSceneId, kind: "photo", layerId, assetId, plan } });
+      return;
+    }
+    commitPhotoChange(activeSceneId, layerId, assetId, plan, "apply");
+  },
+
+  resolvePhotoChange(decision) {
+    const pending = get().pendingPhotoChange;
+    set({ pendingPhotoChange: null });
+    if (!pending || !decision) return;
+    if (pending.kind === "remove") commitRemoval(pending.sceneId, pending.layerId, pending.plan, decision);
+    else commitPhotoChange(pending.sceneId, pending.layerId, pending.assetId, pending.plan, decision);
+  },
+
+  assignSlotPhoto(slot, assetId) {
+    const { activeSceneId, mutateScene, kit } = get();
+    const assets = assetMap(get().assets);
+    mutateScene(activeSceneId, (s) => {
+      let document = assignScenePhoto(s.document, slot, assetId, kit);
+      const frame = photoPair(document)[slot === 1 ? "photo1" : "photo2"];
+      const asset = assets.get(assetId);
+      if (frame && asset && requiresDisclosure(asset)) {
+        document = ensureDisclosureLayer(document, frame.id, asset, kit, measurer());
+      }
+      return { ...s, document };
+    });
+  },
+
+  fixDisclosure(issue) {
+    const { activeSceneId, mutateScene, kit } = get();
+    const assets = assetMap(get().assets);
+    mutateScene(activeSceneId, (s) => {
+      const doc = s.document;
+      switch (issue.fix) {
+        case "add": {
+          const frame = doc.layers.find((l) => l.id === issue.imageLayerId);
+          const asset = frame && "assetId" in frame && frame.assetId ? assets.get(frame.assetId) : undefined;
+          return asset && issue.imageLayerId
+            ? { ...s, document: ensureDisclosureLayer(doc, issue.imageLayerId, asset, kit, measurer()) }
+            : s;
+        }
+        case "show":
+          return issue.layerId
+            ? { ...s, document: ops.updateLayer(doc, issue.layerId, { visible: true, opacity: 1 }) }
+            : s;
+        case "fitHeight":
+          return issue.layerId ? { ...s, document: fitDisclosureHeight(doc, issue.layerId, assets, measurer()) } : s;
+        case "moveIntoSafeArea":
+          return issue.layerId ? { ...s, document: moveIntoSafeArea(doc, issue.layerId, assets, measurer()) } : s;
+        case "remove":
+          return issue.layerId ? { ...s, document: ops.removeLayer(doc, issue.layerId) } : s;
+        default:
+          return s;
+      }
+    });
+  },
+
+  syncAssetDisclosures(asset) {
+    const totals = { added: 0, removed: 0 };
+    const { kit } = get();
+    for (const sceneId of get().sceneOrder) {
+      const scene = get().scenes[sceneId];
+      if (!scene) continue;
+      const result = syncDisclosuresForAsset(scene.document, asset, kit, measurer());
+      if (!result.changed) continue;
+      totals.added += result.added;
+      totals.removed += result.removed;
+      get().mutateScene(sceneId, (s) => ({ ...s, document: result.doc }));
+    }
+    return totals;
   },
 
   duplicateLayer(layerId) {
@@ -412,6 +551,47 @@ export const useEditorStore = create<EditorState>()((set, get) => ({
     });
   },
 }));
+
+function assetMap(assets: Asset[]): Map<string, Asset> {
+  return new Map(assets.map((a) => [a.id, a]));
+}
+
+let cachedMeasure: MeasureText | undefined;
+/** Canvas text measurement in the browser (same font stack the renderers use). */
+function measurer(): MeasureText | undefined {
+  cachedMeasure ??= canvasMeasure(fontStack);
+  return cachedMeasure;
+}
+
+function commitPhotoChange(
+  sceneId: string,
+  layerId: string,
+  assetId: string | null,
+  plan: PhotoChangePlan,
+  decision: DisclosureDecision,
+) {
+  const { mutateScene, kit } = useEditorStore.getState();
+  const assets = assetMap(useEditorStore.getState().assets);
+  mutateScene(sceneId, (s) => {
+    const withPhoto = ops.updateLayer(s.document, layerId, { assetId });
+    return { ...s, document: applyDisclosureDecision(withPhoto, layerId, plan, decision, assets, kit, measurer()) };
+  });
+}
+
+function commitRemoval(sceneId: string, layerId: string, plan: PhotoChangePlan, decision: DisclosureDecision) {
+  const { mutateScene, selectedLayerId } = useEditorStore.getState();
+  const assets = assetMap(useEditorStore.getState().assets);
+  mutateScene(sceneId, (s) => {
+    const linked = disclosureLayersFor(s.document, layerId).map((l) => l.id);
+    let document = s.document;
+    if (linked.length > 0) {
+      document =
+        decision === "keepAsText" ? detachDisclosures(document, linked, assets) : removeLayers(document, linked);
+    }
+    return { ...s, document: ops.removeLayer(document, layerId) };
+  });
+  if (selectedLayerId === layerId) useEditorStore.setState({ selectedLayerId: null });
+}
 
 function applySnapshot(sceneId: string, snapshot: history.SceneSnapshot, nextHistory: history.HistoryState) {
   useEditorStore.setState((state) => {

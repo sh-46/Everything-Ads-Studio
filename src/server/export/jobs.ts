@@ -1,16 +1,26 @@
 import "server-only";
 
 import { randomUUID } from "node:crypto";
-import { createReadStream, existsSync, promises as fs } from "node:fs";
+import { existsSync, promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { Zip, ZipPassThrough } from "fflate";
 import type { Asset } from "@/domain/asset";
 import type { ExportItem } from "@/domain/export-plan";
 import type { Scene } from "@/domain/scene";
 import { measuredBitrateKbps } from "@/domain/export-settings";
+import { msToFrames } from "@/domain/motion-engine";
 import { prepareScene } from "./inputs";
-import { prepareRenderer, renderPng, renderVideo } from "./renderer";
+import { uniqueNames, verifyZip, writeZip } from "./zip";
+import {
+  EXPORT_FPS,
+  FALLBACK_GL,
+  prepareRenderer,
+  releaseBrowser,
+  renderPng,
+  renderTuning,
+  renderVideo,
+  type GlRenderer,
+} from "./renderer";
 
 /**
  * Local export job queue. One job renders at a time (each render already uses several
@@ -32,6 +42,11 @@ export interface JobItem extends ExportItem {
   bitrateKbps: number | null;
   /** Reused an identical earlier render. */
   cached: boolean;
+  /** Frames to render (MP4) — progress and ETA are weighted by this. */
+  frames: number;
+  /** Measured wall-clock time for this file (null when reused or not rendered yet). */
+  renderMs: number | null;
+  renderedFrames: number;
 }
 
 export interface ExportJob {
@@ -47,7 +62,18 @@ export interface ExportJob {
   error: string | null;
   items: JobItem[];
   createdAt: number;
+  /** When rendering (after preparation) began, and how long the whole job took. */
+  startedAt: number | null;
   finishedAt: number | null;
+  /** Render settings used, for benchmarking ("6 parallel frames · swangle"). */
+  tuning: ReturnType<typeof renderTuning> | null;
+}
+
+/** A PNG still costs about as much as this many video frames (measured: ~1 s vs ~6 fps). */
+const PNG_WEIGHT_FRAMES = 6;
+
+function weight(item: Pick<JobItem, "format" | "frames">): number {
+  return item.format === "png" ? PNG_WEIGHT_FRAMES : Math.max(1, item.frames);
 }
 
 /** Everything needed to (re)run a job without reloading the project. */
@@ -153,9 +179,14 @@ export function createJob(input: {
       bytes: null,
       bitrateKbps: null,
       cached: false,
+      frames: item.format === "png" ? 1 : msToFrames(item.durationMs, EXPORT_FPS),
+      renderMs: null,
+      renderedFrames: 0,
     })),
     createdAt: Date.now(),
+    startedAt: null,
     finishedAt: null,
+    tuning: null,
   };
   reg.jobs.set(job.id, job);
   reg.contexts.set(job.id, {
@@ -172,7 +203,8 @@ export function retryJob(jobId: string): ExportJob | null {
   const job = getJob(jobId);
   if (!job || job.status !== "failed") return job;
   for (const item of job.items) {
-    if (item.status === "failed") Object.assign(item, { status: "queued", progress: 0, error: null });
+    if (item.status === "failed")
+      Object.assign(item, { status: "queued", progress: 0, error: null, renderedFrames: 0 });
   }
   Object.assign(job, { status: "queued", stage: "Queued", error: null, finishedAt: null });
   enqueue(job.id);
@@ -210,10 +242,13 @@ async function runJob(job: ExportJob, context: JobContext) {
     await prepareRenderer();
 
     job.status = "rendering";
+    job.startedAt = Date.now();
+    job.tuning = renderTuning();
     for (const item of job.items) {
       if (item.status === "done") continue;
       await renderItem(job, item, context);
     }
+    await releaseBrowser();
 
     const failed = job.items.filter((i) => i.status === "failed");
     if (failed.length > 0) {
@@ -225,16 +260,25 @@ async function runJob(job: ExportJob, context: JobContext) {
     if (job.kind === "package") {
       job.status = "packaging";
       job.stage = "Packaging ZIP";
-      await writeZip(job);
+      await packageZip(job);
     }
     job.status = "ready";
     job.stage = "Ready to download";
   } catch (error) {
+    await releaseBrowser();
     job.status = "failed";
     job.error = error instanceof Error ? error.message : String(error);
     job.stage = "Export failed";
   } finally {
     job.finishedAt = Date.now();
+    if (job.startedAt) {
+      const rendered = job.items.filter((i) => i.renderMs !== null);
+      console.info(
+        `[export] ${job.kind} ${job.id.slice(0, 8)} ${job.status} in ${((job.finishedAt - job.createdAt) / 1000).toFixed(1)} s ` +
+          `(${rendered.length} rendered, ${job.items.length - rendered.length} reused; ` +
+          `concurrency ${job.tuning?.concurrency}, gl ${job.tuning?.gl}, reuse browser ${job.tuning?.reuseBrowser})`,
+      );
+    }
   }
 }
 
@@ -256,13 +300,40 @@ async function renderItem(job: ExportJob, item: JobItem, context: JobContext) {
       item.cached = true;
     } else {
       const temp = path.join(jobDir(job.id), `.${item.key}.rendering.${item.format}`);
-      if (item.format === "png") {
-        await renderPng(prepared.input, temp);
-      } else {
-        await renderVideo(prepared.input, temp, (p) => {
-          item.progress = Math.min(0.99, p);
-        });
+      const startedAt = performance.now();
+      const render = (gl: GlRenderer) =>
+        item.format === "png"
+          ? renderPng(prepared.input, temp, gl)
+          : renderVideo(
+              prepared.input,
+              temp,
+              (p) => {
+                item.progress = Math.min(0.99, p.progress);
+                item.renderedFrames = p.renderedFrames;
+                item.frames = p.totalFrames;
+              },
+              gl,
+            );
+      const gl = renderTuning().gl;
+      try {
+        await render(gl);
+      } catch (error) {
+        // GPU rendering is ~4× faster but a GPU/driver hiccup shouldn't fail the export:
+        // retry this file once with software GL (same output, just slower).
+        if (gl === FALLBACK_GL) throw error;
+        console.warn(`[export] ${item.label}: ${gl} render failed, retrying with ${FALLBACK_GL}:`, error);
+        item.progress = 0;
+        item.renderedFrames = 0;
+        item.warnings.push("Rendered with software graphics after a GPU rendering error (slower, same output).");
+        await render(FALLBACK_GL);
       }
+      item.renderMs = Math.round(performance.now() - startedAt);
+      console.info(
+        `[export] ${item.label} ${item.format.toUpperCase()} ${item.width}×${item.height}` +
+          (item.format === "mp4"
+            ? ` ${item.frames} frames in ${(item.renderMs / 1000).toFixed(1)} s (${((item.frames * 1000) / item.renderMs).toFixed(1)} fps)`
+            : ` in ${(item.renderMs / 1000).toFixed(1)} s`),
+      );
       await fs.rename(temp, cached);
     }
     await fs.copyFile(cached, target);
@@ -279,47 +350,41 @@ async function renderItem(job: ExportJob, item: JobItem, context: JobContext) {
   }
 }
 
-/** Streams every rendered file into the ZIP (stored, not recompressed: MP4/PNG are compressed). */
-async function writeZip(job: ExportJob) {
+/** Packages every rendered file (stored, not recompressed) and verifies the result. */
+async function packageZip(job: ExportJob) {
   const out = zipPath(job)!;
-  const handle = await fs.open(out, "w");
-  try {
-    await new Promise<void>((resolve, reject) => {
-      const writes: Promise<unknown>[] = [];
-      const zip = new Zip((error, chunk, final) => {
-        if (error) return reject(error);
-        writes.push(handle.write(chunk));
-        if (final) Promise.all(writes).then(() => resolve(), reject);
-      });
-      (async () => {
-        const names = new Set<string>();
-        for (const item of job.items) {
-          let name = item.folder ? `${item.folder}/${item.filename}` : item.filename;
-          // Never overwrite: disambiguate any duplicate names.
-          for (let n = 2; names.has(name); n++) name = name.replace(/(\.[a-z0-9]+)$/i, `-${n}$1`);
-          names.add(name);
-          const entry = new ZipPassThrough(name);
-          zip.add(entry);
-          for await (const chunk of createReadStream(itemPath(job, item))) entry.push(chunk as Uint8Array);
-          entry.push(new Uint8Array(0), true);
-        }
-        zip.end();
-      })().catch(reject);
-    });
-  } finally {
-    await handle.close();
-  }
-  const stat = await fs.stat(out);
-  if (stat.size === 0) throw new Error("ZIP file is empty.");
+  const names = uniqueNames(job.items.map((i) => (i.folder ? `${i.folder}/${i.filename}` : i.filename)));
+  const entries = job.items.map((item, i) => ({ name: names[i], source: itemPath(job, item) }));
+  await writeZip(out, entries);
+  await verifyZip(out, entries);
 }
 
 /** Public, serializable view of a job (no file paths). */
+/**
+ * Progress weighted by frames (a 10 s scene counts for more than a 7 s one; a PNG is
+ * small). The ETA uses this job's measured throughput, so it adapts to the machine.
+ */
+function progressOf(job: ExportJob): { progress: number; etaMs: number | null } {
+  if (job.status === "ready") return { progress: 1, etaMs: 0 };
+  const total = job.items.reduce((sum, i) => sum + weight(i), 0);
+  if (!total) return { progress: 0, etaMs: null };
+  const doneWeight = (i: JobItem) =>
+    i.status === "done" ? weight(i) : i.status === "rendering" ? weight(i) * i.progress : 0;
+  const done = job.items.reduce((sum, i) => sum + doneWeight(i), 0);
+  // Leave a sliver for packaging so 100% means "downloadable".
+  const progress = Math.min(0.99, done / total);
+  if (job.status !== "rendering" || !job.startedAt) return { progress, etaMs: null };
+  // Throughput from work actually rendered (reused files finish instantly and would skew it).
+  const worked = job.items.filter((i) => !i.cached && (i.renderMs !== null || i.status === "rendering"));
+  const workedWeight = worked.reduce((sum, i) => sum + doneWeight(i), 0);
+  const elapsed = Date.now() - job.startedAt;
+  if (workedWeight < total * 0.03 || elapsed < 3000) return { progress, etaMs: null };
+  const remaining = total - done;
+  return { progress, etaMs: Math.round((remaining / workedWeight) * elapsed) };
+}
+
 export function publicJob(job: ExportJob) {
-  const total = job.items.length;
-  const done = job.items.reduce(
-    (sum, i) => sum + (i.status === "done" ? 1 : i.status === "rendering" ? i.progress : 0),
-    0,
-  );
+  const { progress, etaMs } = progressOf(job);
   return {
     id: job.id,
     kind: job.kind,
@@ -327,7 +392,10 @@ export function publicJob(job: ExportJob) {
     stage: job.stage,
     error: job.error,
     zipName: job.zipName,
-    progress: job.status === "ready" ? 1 : total ? done / total : 0,
+    progress,
+    etaMs,
+    elapsedMs: (job.finishedAt ?? Date.now()) - job.createdAt,
+    tuning: job.tuning,
     zipBytes: null as number | null,
     items: job.items.map(
       ({
@@ -347,6 +415,9 @@ export function publicJob(job: ExportJob) {
         bytes,
         bitrateKbps,
         cached,
+        frames,
+        renderMs,
+        renderedFrames,
       }) => ({
         key,
         label,
@@ -364,6 +435,9 @@ export function publicJob(job: ExportJob) {
         bytes,
         bitrateKbps,
         cached,
+        frames,
+        renderMs,
+        renderedFrames,
       }),
     ),
   };

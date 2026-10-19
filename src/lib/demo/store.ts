@@ -268,7 +268,7 @@ function seed(): DemoDb {
 }
 
 // Versioned so a dev server running older code reseeds instead of reusing a stale shape.
-const globalKey = "__everythingAdsDemoStore_v3" as const;
+const globalKey = "__everythingAdsDemoStore_v4" as const;
 type GlobalWithDemo = typeof globalThis & { [globalKey]?: DemoDb };
 
 function db(): DemoDb {

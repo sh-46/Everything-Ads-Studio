@@ -43,6 +43,33 @@ export interface RenderInput {
   fonts: BrandFont[];
 }
 
+export type GlRenderer = "angle" | "swangle" | "swiftshader";
+const GL_RENDERERS: GlRenderer[] = ["angle", "swangle", "swiftshader"];
+/** Software GL: ~4× slower here, but used to retry a file if GPU rendering fails. */
+export const FALLBACK_GL: GlRenderer = "swangle";
+
+/**
+ * Render tuning, read per render so it can be benchmarked without code changes:
+ * - EXPORT_GL: Chrome's GL backend. Default "angle" (GPU via Metal on macOS).
+ * - EXPORT_CONCURRENCY: browser tabs rendering frames in parallel. Default 1: with the GPU
+ *   backend, more tabs contend for the GPU and get slower.
+ * - EXPORT_REUSE_BROWSER=0: open a fresh browser per file instead of one per export job.
+ *
+ * Measured on an M2 Pro (12 cores), 10 s 1080×1920 scene (300 frames), see
+ * docs/ARCHITECTURE.md → Export performance: swangle ×3 tabs 78.8 s (3.8 fps, the previous
+ * default) · swangle ×6 90.5 s · angle ×4 29.6 s · angle ×2 22.5 s · angle ×1 19.4 s (15.5 fps).
+ */
+export function renderTuning() {
+  const cpus = os.cpus().length;
+  const requested = Number(process.env.EXPORT_CONCURRENCY);
+  const gl = process.env.EXPORT_GL as GlRenderer | undefined;
+  return {
+    concurrency: Number.isInteger(requested) && requested > 0 ? Math.min(requested, cpus) : 1,
+    gl: gl && GL_RENDERERS.includes(gl) ? gl : ("angle" as GlRenderer),
+    reuseBrowser: process.env.EXPORT_REUSE_BROWSER !== "0",
+  };
+}
+
 /**
  * Browser for rendering. Remotion's downloaded headless shell didn't start rendering on
  * this macOS version, so an installed Google Chrome is preferred when present. Override
@@ -51,22 +78,56 @@ export interface RenderInput {
 type BrowserOptions = {
   browserExecutable?: string;
   chromeMode?: "chrome-for-testing";
-  /** Software GL: slower than GPU but stable for long, image-heavy renders. */
-  chromiumOptions: { gl: "swangle" };
+  chromiumOptions: { gl: GlRenderer };
 };
 
-function browserOptions(): BrowserOptions {
+function browserOptions(gl: GlRenderer = renderTuning().gl): BrowserOptions {
+  const chromiumOptions = { gl };
   const configured = process.env.REMOTION_BROWSER_EXECUTABLE;
-  if (configured === "headless-shell") return { chromiumOptions: { gl: "swangle" } };
+  if (configured === "headless-shell") return { chromiumOptions };
   const candidate = configured || "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
   return existsSync(/*turbopackIgnore: true*/ candidate)
-    ? { browserExecutable: candidate, chromeMode: "chrome-for-testing", chromiumOptions: { gl: "swangle" } }
-    : { chromiumOptions: { gl: "swangle" } };
+    ? { browserExecutable: candidate, chromeMode: "chrome-for-testing", chromiumOptions }
+    : { chromiumOptions };
 }
 
-function concurrency(): number {
-  // Leave headroom so the editor stays responsive while rendering.
-  return Math.max(1, Math.min(3, Math.floor(os.cpus().length / 3)));
+type Browser = Awaited<ReturnType<typeof import("@remotion/renderer").openBrowser>>;
+const browserKey = "__everythingAdsRenderBrowser" as const;
+type GB = typeof globalThis & { [browserKey]?: { gl: GlRenderer; browser: Promise<Browser> } | null };
+
+/**
+ * One browser shared by every file of an export job (opening Chrome costs ~1–2 s, and
+ * Remotion would otherwise open one for selecting the composition and another for
+ * rendering). Released when the job ends; a crashed browser is replaced on next use.
+ */
+async function sharedBrowser(gl: GlRenderer): Promise<Browser | undefined> {
+  if (!renderTuning().reuseBrowser) return undefined;
+  const g = globalThis as GB;
+  if (g[browserKey] && g[browserKey].gl !== gl) await releaseBrowser();
+  if (!g[browserKey]) {
+    const { openBrowser } = await import("@remotion/renderer");
+    const { browserExecutable, chromeMode, chromiumOptions } = browserOptions(gl);
+    const opening = openBrowser("chrome", { browserExecutable, chromeMode, chromiumOptions });
+    const entry = { gl, browser: opening };
+    g[browserKey] = entry;
+    opening.catch(() => {
+      if (g[browserKey] === entry) g[browserKey] = null;
+    });
+  }
+  return g[browserKey]!.browser;
+}
+
+/** Closes the shared browser (end of a job, or after a failure so the next file starts clean). */
+export async function releaseBrowser(): Promise<void> {
+  const g = globalThis as GB;
+  const current = g[browserKey];
+  g[browserKey] = null;
+  if (!current) return;
+  try {
+    await (await current.browser).close({ silent: true });
+  } catch {
+    // Already gone (crashed or closed).
+  }
 }
 
 async function sourceSignature(): Promise<string> {
@@ -122,18 +183,20 @@ function inputProps(input: RenderInput, staticLayout: boolean) {
   return { document: input.document, assets: input.assets, fonts: input.fonts, staticLayout, fps: EXPORT_FPS };
 }
 
-async function select(input: RenderInput, staticLayout: boolean) {
+async function select(input: RenderInput, staticLayout: boolean, gl: GlRenderer) {
   const { selectComposition } = await import("@remotion/renderer");
   const serveUrl = await getServeUrl();
   const props = inputProps(input, staticLayout);
+  const puppeteerInstance = await sharedBrowser(gl);
   const composition = await selectComposition({
     serveUrl,
     id: "Scene",
     inputProps: props,
     timeoutInMilliseconds: 60_000,
-    ...browserOptions(),
+    puppeteerInstance,
+    ...browserOptions(gl),
   });
-  return { serveUrl, composition, props };
+  return { serveUrl, composition, props, puppeteerInstance };
 }
 
 export interface VideoCheck {
@@ -144,16 +207,29 @@ export interface VideoCheck {
   codec: string | null;
   /** Measured average bitrate of the file (target is MP4_SETTINGS.targetBitrateKbps). */
   bitrateKbps: number;
+  /** Wall-clock time of the render (frames + encoding), excluding bundling. */
+  renderMs: number;
+  frames: number;
+}
+
+/** Live progress of one MP4: overall 0–1 plus frames rendered (for throughput/ETA). */
+export interface RenderProgress {
+  progress: number;
+  renderedFrames: number;
+  totalFrames: number;
 }
 
 /** H.264 MP4 at exactly the scene's size, 30 fps and configured duration. */
 export async function renderVideo(
   input: RenderInput,
   outputLocation: string,
-  onProgress: (progress: number) => void,
+  onProgress: (progress: RenderProgress) => void,
+  gl: GlRenderer = renderTuning().gl,
 ): Promise<VideoCheck> {
   const { renderMedia, getVideoMetadata, makeCancelSignal } = await import("@remotion/renderer");
-  const { serveUrl, composition, props } = await select(input, false);
+  const { serveUrl, composition, props, puppeteerInstance } = await select(input, false, gl);
+  const startedAt = performance.now();
+  const tuning = renderTuning();
   const { cancelSignal, cancel } = makeCancelSignal();
   // Watchdog: a crashed browser must fail the job, never leave it hanging.
   const budgetMs = 120_000 + composition.durationInFrames * 1500;
@@ -180,17 +256,20 @@ export async function renderVideo(
     ffmpegOverride: ({ args }) => withProfile(args, input.document.width, input.document.height),
     outputLocation,
     overwrite: true,
-    concurrency: concurrency(),
+    concurrency: tuning.concurrency,
     timeoutInMilliseconds: 60_000,
-    onProgress: ({ progress }) => {
+    puppeteerInstance,
+    onProgress: ({ progress, renderedFrames }) => {
       lastProgressAt = Date.now();
-      onProgress(progress);
+      onProgress({ progress, renderedFrames, totalFrames: composition.durationInFrames });
     },
-    ...browserOptions(),
+    ...browserOptions(gl),
   });
   try {
     await render;
   } catch (error) {
+    // The shared browser may be the cause (crash/hang): start the next file with a fresh one.
+    await releaseBrowser();
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(
       /cancel/i.test(message)
@@ -209,6 +288,8 @@ export async function renderVideo(
     durationInSeconds: meta.durationInSeconds ?? 0,
     codec: meta.codec ?? null,
     bitrateKbps: measuredBitrateKbps((await fs.stat(outputLocation)).size, meta.durationInSeconds ?? 0),
+    renderMs: Math.round(performance.now() - startedAt),
+    frames: composition.durationInFrames,
   };
   const expectedFrames = msToFrames(input.document.durationMs, EXPORT_FPS);
   const problems: string[] = [];
@@ -228,27 +309,39 @@ export async function renderVideo(
  * CTA PNG. Still-frame policy: the static, fully-entered layout — the same arrangement
  * the Scene Editor shows — with entrance/exit animation ignored.
  */
-export async function renderPng(input: RenderInput, output: string): Promise<{ width: number; height: number }> {
+export async function renderPng(
+  input: RenderInput,
+  output: string,
+  gl: GlRenderer = renderTuning().gl,
+): Promise<{ width: number; height: number; renderMs: number }> {
   const { renderStill } = await import("@remotion/renderer");
-  const { serveUrl, composition, props } = await select(input, true);
-  await renderStill({
-    serveUrl,
-    composition,
-    inputProps: props,
-    output,
-    frame: 0,
-    imageFormat: "png",
-    overwrite: true,
-    timeoutInMilliseconds: 60_000,
-    ...browserOptions(),
-  });
+  const { serveUrl, composition, props, puppeteerInstance } = await select(input, true, gl);
+  const startedAt = performance.now();
+  try {
+    await renderStill({
+      serveUrl,
+      composition,
+      inputProps: props,
+      output,
+      frame: 0,
+      imageFormat: "png",
+      overwrite: true,
+      timeoutInMilliseconds: 60_000,
+      puppeteerInstance,
+      ...browserOptions(gl),
+    });
+  } catch (error) {
+    await releaseBrowser();
+    throw error;
+  }
+  const renderMs = Math.round(performance.now() - startedAt);
   const size = await pngSize(output);
   if (size.width !== input.document.width || size.height !== input.document.height) {
     throw new Error(
       `Rendered PNG is ${size.width}×${size.height}, expected ${input.document.width}×${input.document.height}.`,
     );
   }
-  return size;
+  return { ...size, renderMs };
 }
 
 /** Reads width/height from the PNG IHDR chunk (also proves the file is a PNG). */

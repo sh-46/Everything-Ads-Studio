@@ -1,9 +1,21 @@
 "use client";
 
-import { Eye, EyeOff, Image as ImageIcon, Lock, Shapes, Sparkles, Square, Type } from "lucide-react";
+import {
+  AlertTriangle,
+  Eye,
+  EyeOff,
+  Image as ImageIcon,
+  Lock,
+  Shapes,
+  ShieldCheck,
+  Sparkles,
+  Square,
+  Type,
+} from "lucide-react";
 import { useState } from "react";
 import { cn } from "cn";
 import type { LayerType } from "@/domain/scene";
+import { useDisclosureIssues } from "../hooks/use-disclosure-issues";
 import { useActiveScene, useEditorStore } from "../store/editor-store";
 
 const TYPE_ICONS: Record<LayerType, React.ElementType> = {
@@ -23,6 +35,7 @@ export function LayerList() {
   const moveLayer = useEditorStore((s) => s.moveLayer);
   const [dragId, setDragId] = useState<string | null>(null);
   const [dropIndex, setDropIndex] = useState<number | null>(null);
+  const issues = useDisclosureIssues();
 
   if (!scene) return null;
   const layers = scene.document.layers;
@@ -35,7 +48,14 @@ export function LayerList() {
   return (
     <ul aria-label="Layers" className="space-y-px p-2" onDragLeave={() => setDropIndex(null)}>
       {displayed.map((layer, displayIndex) => {
-        const Icon = TYPE_ICONS[layer.type];
+        const isDisclosure = layer.type === "text" && layer.disclosure !== null;
+        const Icon = isDisclosure ? ShieldCheck : TYPE_ICONS[layer.type];
+        const layerIssues = issues.filter((i) => i.layerId === layer.id || (!i.layerId && i.imageLayerId === layer.id));
+        const issueLevel = layerIssues.some((i) => i.severity === "error")
+          ? "error"
+          : layerIssues.length
+            ? "warning"
+            : null;
         const selected = layer.id === selectedLayerId;
         const storedIndex = layers.length - 1 - displayIndex;
         return (
@@ -74,8 +94,23 @@ export function LayerList() {
               onClick={() => selectLayer(layer.id)}
               aria-pressed={selected}
             >
-              <Icon className="text-muted-foreground size-3.5 shrink-0" aria-hidden />
+              <Icon
+                className={cn("size-3.5 shrink-0", isDisclosure ? "text-amber-600" : "text-muted-foreground")}
+                aria-hidden
+              />
               <span className="truncate">{layer.name}</span>
+              {isDisclosure && (
+                <span className="shrink-0 rounded bg-amber-100 px-1 text-[9px] font-semibold tracking-wide text-amber-900 uppercase dark:bg-amber-900/40 dark:text-amber-200">
+                  Disclosure
+                </span>
+              )}
+              {issueLevel && (
+                <AlertTriangle
+                  className={cn("size-3 shrink-0", issueLevel === "error" ? "text-destructive" : "text-amber-600")}
+                  aria-label={layerIssues.map((i) => i.message).join(" ")}
+                  data-testid="layer-disclosure-issue"
+                />
+              )}
             </button>
             {layer.locked && <Lock className="text-muted-foreground size-3 shrink-0" aria-label="Locked" />}
             <button

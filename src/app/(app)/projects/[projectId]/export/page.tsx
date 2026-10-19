@@ -4,7 +4,9 @@ import { Suspense } from "react";
 import { z } from "zod";
 import PageSkeleton from "@/app/(app)/loading";
 import { PageHeader } from "@/components/app/page-header";
-import { buildExportPlan } from "@/domain/export-plan";
+import { buildExportPlan, disclosureReview } from "@/domain/export-plan";
+import { referencedAssetIds } from "@/domain/scene-photos";
+import { listProjectPhotos } from "@/features/assets/queries";
 import { ExportPanel } from "@/features/exports/export-panel";
 import { getProject, listScenes } from "@/features/projects/queries";
 import { isDemoMode } from "@/lib/demo/mode";
@@ -18,7 +20,10 @@ async function ExportPageContent({ params }: PageProps<"/projects/[projectId]/ex
   const ctx = await requireSession();
   const project = await getProject(ctx, projectId);
   if (!project) notFound();
-  const plan = buildExportPlan(project, await listScenes(ctx, projectId));
+  const scenes = await listScenes(ctx, projectId);
+  const plan = buildExportPlan(project, scenes);
+  const photos = await listProjectPhotos(ctx, projectId, [...referencedAssetIds(scenes.map((s) => s.document))]);
+  const review = disclosureReview(plan, scenes, photos);
 
   return (
     <>
@@ -31,7 +36,7 @@ async function ExportPageContent({ params }: PageProps<"/projects/[projectId]/ex
           { label: "Export" },
         ]}
       />
-      <ExportPanel projectId={project.id} plan={plan} demoMode={isDemoMode()} />
+      <ExportPanel projectId={project.id} plan={plan} review={review} demoMode={isDemoMode()} />
     </>
   );
 }

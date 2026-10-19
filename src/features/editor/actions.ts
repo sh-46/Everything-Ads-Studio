@@ -1,12 +1,26 @@
 "use server";
 
 import { z } from "zod";
-import { parseBrandKit } from "@/domain/brand-kit";
-import { sceneDocumentSchema, type Scene } from "@/domain/scene";
-import { assignScenePhoto as applyPhoto } from "@/domain/scene-photos";
-import { mapScene, SCENE_COLUMNS, type SceneRow } from "@/features/projects/queries";
+import type { Asset } from "@/domain/asset";
+import { parseBrandKit, type BrandKit } from "@/domain/brand-kit";
+import {
+  applyDisclosureDecision,
+  planPhotoChange,
+  syncDisclosuresForAsset,
+  type DisclosureDecision,
+} from "@/domain/disclosures";
+import { sceneDocumentSchema, type Scene, type SceneDocument } from "@/domain/scene";
+import { assignScenePhoto as applyPhoto, scenePhotoLayers, type PhotoSlot } from "@/domain/scene-photos";
+import { getAssetById } from "@/features/assets/queries";
+import { getProject, listScenes, mapScene, SCENE_COLUMNS, type SceneRow } from "@/features/projects/queries";
 import { isDemoMode } from "@/lib/demo/mode";
-import { demoDuplicateScene, demoGetAsset, demoGetSceneWithBrand, demoSaveScene } from "@/lib/demo/store";
+import {
+  demoDuplicateScene,
+  demoGetAsset,
+  demoGetSceneWithBrand,
+  demoListScenes,
+  demoSaveScene,
+} from "@/lib/demo/store";
 import { requireSession } from "@/lib/supabase/server";
 
 const saveSceneInputSchema = z.object({
@@ -65,20 +79,48 @@ const assignInputSchema = z.object({
   expectedRevision: z.number().int().min(1),
   slot: z.union([z.literal(1), z.literal(2)]),
   assetId: z.uuid().nullable(),
+  /** The user's answer to the disclosure question (see `planPhotoChange`); default "apply". */
+  disclosure: z.enum(["apply", "skip", "keepAsText"]).default("apply"),
 });
 
 export type AssignScenePhotoResult = { status: "saved"; scene: Scene } | Exclude<SaveSceneResult, { status: "saved" }>;
 
+/** Photos referenced by a scene (frames and disclosure links) plus `extra`, with metadata. */
+function assetIdsOf(doc: SceneDocument, extra: (string | null)[]): string[] {
+  const ids = new Set<string>(extra.filter((id): id is string => Boolean(id)));
+  for (const l of doc.layers) {
+    if (l.type === "image" && l.assetId) ids.add(l.assetId);
+    if (l.type === "text" && l.disclosure) ids.add(l.disclosure.assetId);
+  }
+  return [...ids];
+}
+
+/** Applies the photo and its disclosure decision to a document (pure). */
+function assignWithDisclosure(
+  doc: SceneDocument,
+  slot: PhotoSlot,
+  asset: Asset | null,
+  decision: DisclosureDecision,
+  assets: Map<string, Asset>,
+  kit: BrandKit,
+): SceneDocument {
+  const frameBefore = scenePhotoLayers(doc)[slot === 1 ? "slot1" : "slot2"];
+  const plan = planPhotoChange(doc, frameBefore?.id ?? null, asset, assets);
+  const next = applyPhoto(doc, slot, asset?.id ?? null, kit);
+  const frame = frameBefore ?? scenePhotoLayers(next)[slot === 1 ? "slot1" : "slot2"];
+  return frame ? applyDisclosureDecision(next, frame.id, plan, decision, assets, kit) : next;
+}
+
 /**
  * Assigns (or clears) a scene's photo slot from the Scenes Overview. Only the frame's
- * asset reference changes; layout, crop and motion stay as they are. Uses the same
- * revision check as the editor, so an open editor tab sees a conflict instead of
- * silently overwriting.
+ * asset reference changes; layout, crop and motion stay as they are. The photo's
+ * disclosure follows the user's decision. Uses the same revision check as the editor,
+ * so an open editor tab sees a conflict instead of silently overwriting.
  */
 export async function assignScenePhoto(input: z.input<typeof assignInputSchema>): Promise<AssignScenePhotoResult> {
   const parsed = assignInputSchema.safeParse(input);
   if (!parsed.success) return { status: "error", error: parsed.error.issues[0].message };
-  const { sceneId, expectedRevision, slot, assetId } = parsed.data;
+  const { sceneId, expectedRevision, slot, assetId, disclosure } = parsed.data;
 
   if (isDemoMode()) {
     const found = demoGetSceneWithBrand(sceneId);
@@ -90,7 +132,20 @@ export async function assignScenePhoto(input: z.input<typeof assignInputSchema>)
       }
     }
     if (found.scene.revision !== expectedRevision) return { status: "conflict", current: found.scene };
-    const document = applyPhoto(found.scene.document, slot, assetId, found.kit);
+    const assets = new Map(
+      assetIdsOf(found.scene.document, [assetId])
+        .map((id) => demoGetAsset(id))
+        .filter((a): a is Asset & { brandId: string } => a !== null)
+        .map((a) => [a.id, a]),
+    );
+    const document = assignWithDisclosure(
+      found.scene.document,
+      slot,
+      assetId ? (assets.get(assetId) ?? null) : null,
+      disclosure,
+      assets,
+      found.kit,
+    );
     const saved = demoSaveScene({ sceneId, expectedRevision, name: found.scene.name, document });
     if (!saved) return { status: "error", error: "Scene not found." };
     if (saved.status === "conflict") return saved;
@@ -120,10 +175,81 @@ export async function assignScenePhoto(input: z.input<typeof assignInputSchema>)
     }
   }
   const { data: kitRow } = await ctx.supabase.from("brand_kits").select("kit").eq("brand_id", brandId).maybeSingle();
-  const document = applyPhoto(scene.document, slot, assetId, parseBrandKit(kitRow?.kit));
+  const loaded = await Promise.all(assetIdsOf(scene.document, [assetId]).map((id) => getAssetById(ctx, id)));
+  const assets = new Map(loaded.filter((a): a is Asset => a !== null).map((a) => [a.id, a]));
+  const document = assignWithDisclosure(
+    scene.document,
+    slot,
+    assetId ? (assets.get(assetId) ?? null) : null,
+    disclosure,
+    assets,
+    parseBrandKit(kitRow?.kit),
+  );
   const saved = await saveScene({ sceneId, expectedRevision, name: scene.name, document });
   if (saved.status !== "saved") return saved;
   return { status: "saved", scene: { ...scene, document, revision: saved.revision, updatedAt: saved.updatedAt } };
+}
+
+export type SyncDisclosureResult =
+  { ok: true; scenes: Scene[]; added: number; removed: number; conflicts: string[] } | { ok: false; error: string };
+
+/**
+ * After a photo's disclosure changes in the project photo library: adds the missing
+ * disclosure layers where it's now required, or removes them where it no longer is.
+ * Each scene is saved with the usual revision check; scenes changed elsewhere meanwhile
+ * are reported (the editor's review flags them) rather than overwritten.
+ */
+export async function syncPhotoDisclosure(projectId: string, assetId: string): Promise<SyncDisclosureResult> {
+  if (!z.uuid().safeParse(projectId).success || !z.uuid().safeParse(assetId).success) {
+    return { ok: false, error: "Invalid request." };
+  }
+  let scenes: Scene[];
+  let asset: Asset | null;
+  let kit: BrandKit;
+  if (isDemoMode()) {
+    scenes = demoListScenes(projectId);
+    asset = demoGetAsset(assetId);
+    const found = scenes[0] ? demoGetSceneWithBrand(scenes[0].id) : null;
+    if (!found) return { ok: false, error: "Project not found." };
+    kit = found.kit;
+  } else {
+    const ctx = await requireSession();
+    const project = await getProject(ctx, projectId);
+    if (!project) return { ok: false, error: "Project not found." };
+    scenes = await listScenes(ctx, projectId);
+    asset = await getAssetById(ctx, assetId);
+    const { data: kitRow } = await ctx.supabase
+      .from("brand_kits")
+      .select("kit")
+      .eq("brand_id", project.brandId)
+      .maybeSingle();
+    kit = parseBrandKit(kitRow?.kit);
+  }
+  if (!asset || asset.kind !== "photo" || asset.projectId !== projectId)
+    return { ok: false, error: "Photo not found." };
+
+  const updated: Scene[] = [];
+  const conflicts: string[] = [];
+  let added = 0;
+  let removed = 0;
+  for (const scene of scenes) {
+    const result = syncDisclosuresForAsset(scene.document, asset, kit);
+    if (!result.changed) continue;
+    const saved = await saveScene({
+      sceneId: scene.id,
+      expectedRevision: scene.revision,
+      name: scene.name,
+      document: result.doc,
+    });
+    if (saved.status === "saved") {
+      added += result.added;
+      removed += result.removed;
+      updated.push({ ...scene, document: result.doc, revision: saved.revision, updatedAt: saved.updatedAt });
+    } else {
+      conflicts.push(scene.name);
+    }
+  }
+  return { ok: true, scenes: updated, added, removed, conflicts };
 }
 
 const duplicateInputSchema = z.object({

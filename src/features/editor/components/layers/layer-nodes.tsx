@@ -2,6 +2,7 @@
 
 import { Ellipse, Image as KonvaImage, Rect, Text } from "react-konva";
 import { hexToRgba } from "@/domain/color";
+import { resolveLayerText } from "@/domain/disclosures";
 import { fontStack } from "@/domain/fonts";
 import { linearGradientPoints, radialGradientRadius, visibleImageRegion } from "@/domain/geometry";
 import type { GradientLayer, ImageLayer, LogoLayer, ShapeLayer, TextLayer } from "@/domain/scene";
@@ -16,13 +17,19 @@ import { useEditorStore } from "../../store/editor-store";
 export function TextNode({ layer }: { layer: TextLayer }) {
   // Remount when brand fonts finish loading so Konva re-measures with the real font.
   const fontsVersion = useEditorStore((s) => s.fontsVersion);
+  // Disclosure layers show their photo's current wording from the library.
+  const text = useEditorStore((s) => {
+    if (!layer.disclosure) return layer.text;
+    const asset = s.assets.find((a) => a.id === layer.disclosure!.assetId);
+    return resolveLayerText(layer, new Map(asset ? [[asset.id, asset]] : []));
+  });
   return (
     <>
       {/* Hit/bounds box: the stored text box, independent of how much text overflows. */}
       <Rect width={layer.width} height={layer.height} fill="transparent" />
       <Text
         key={fontsVersion}
-        text={layer.text}
+        text={text}
         width={layer.width}
         fontFamily={fontStack(layer.fontFamily)}
         fontSize={layer.fontSize}

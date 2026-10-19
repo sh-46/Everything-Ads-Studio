@@ -1,7 +1,8 @@
 import "server-only";
 
 import { createHash } from "node:crypto";
-import { brandFontsFromAssets, type Asset } from "@/domain/asset";
+import { brandFontsFromAssets, photoDisclosureText, type Asset } from "@/domain/asset";
+import { disclosureIssues } from "@/domain/disclosures";
 import { MP4_SETTINGS } from "@/domain/export-settings";
 import { isSystemFont } from "@/domain/fonts";
 import type { Scene } from "@/domain/scene";
@@ -18,7 +19,7 @@ export interface PreparedScene {
 }
 
 /** Bump when rendering output changes in a way cached files shouldn't survive. */
-const RENDER_VERSION = "2";
+const RENDER_VERSION = "3";
 
 /**
  * The render browser loads assets over HTTP, so relative URLs (Demo Mode's
@@ -54,6 +55,18 @@ export function prepareScene(scene: Scene, assets: Asset[], origin: string, form
     }
   }
 
+  // Disclosure layers read their wording from the linked photo.
+  for (const layer of doc.layers) {
+    const asset = layer.type === "text" && layer.disclosure ? byId.get(layer.disclosure.assetId) : undefined;
+    if (asset && !used.includes(asset)) used.push(asset);
+  }
+  // Never omit a required disclosure silently: every review finding travels with the file.
+  for (const issue of disclosureIssues(doc, byId)) {
+    warnings.push(
+      `${issue.severity === "error" ? "Disclosure problem" : "Disclosure check"} in ${scene.name}: ${issue.message}`,
+    );
+  }
+
   const brandFonts = brandFontsFromAssets(assets);
   const families = new Set(
     doc.layers.filter((l) => l.visible && l.type === "text").map((l) => (l.type === "text" ? l.fontFamily : "")),
@@ -72,7 +85,13 @@ export function prepareScene(scene: Scene, assets: Asset[], origin: string, form
         settings: format === "mp4" ? MP4_SETTINGS : null,
         format,
         doc,
-        assets: used.map((a) => ({ id: a.id, url: stableUrl(a.url), w: a.width, h: a.height })),
+        assets: used.map((a) => ({
+          id: a.id,
+          url: stableUrl(a.url),
+          w: a.width,
+          h: a.height,
+          disclosure: photoDisclosureText(a),
+        })),
         fonts: fonts.map((f) => ({ ...f, url: stableUrl(f.url) })),
       }),
     )

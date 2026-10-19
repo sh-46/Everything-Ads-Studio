@@ -18,6 +18,27 @@ export const DIMENSION_PRESETS = [
   { id: "cta", name: "CTA Image", width: 1080, height: 300 },
 ] as const;
 
+/**
+ * Default length of a new scene. Each scene's duration is independent and editable;
+ * these only apply when a scene is created (existing scenes keep their duration).
+ * - Motion Tile (Square Feed): 7 s.
+ * - Facebook Build video scenes (Intro, Exterior, Interior, Performance, Outro): 10 s.
+ * - CTA: exported as a PNG; 10 s so it matches the Outro it's stacked with in previews.
+ */
+export const DEFAULT_SCENE_DURATION_MS: Record<SceneKind, number> = {
+  feed: 7000,
+  intro: 10_000,
+  exterior: 10_000,
+  interior: 10_000,
+  performance: 10_000,
+  outro: 10_000,
+  cta: 10_000,
+  custom: 10_000,
+};
+
+/** Quick picks offered next to the duration field. */
+export const DURATION_PRESETS_MS = [5000, 6000, 7000, 10_000, 15_000] as const;
+
 export interface SceneTemplate {
   name: string;
   kind: SceneKind;
@@ -39,7 +60,7 @@ function layoutScene(
       schemaVersion: SCENE_SCHEMA_VERSION,
       ...size,
       background,
-      durationMs: 6000,
+      durationMs: DEFAULT_SCENE_DURATION_MS[kind],
       layout,
       layers: buildLayoutLayers(layout, size, kit, background),
     },
@@ -60,7 +81,7 @@ export function ctaDocument(kit: BrandKit): SceneDocument {
     width,
     height,
     background: kit.colors.background,
-    durationMs: 6000,
+    durationMs: DEFAULT_SCENE_DURATION_MS.cta,
     layers: [
       makeLayer<ShapeLayer>({
         motion: textMotion(kit, "sceneStart", 200),

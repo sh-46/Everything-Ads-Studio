@@ -29,11 +29,35 @@ export const LAYER_ROLES = [
   "cta",
   "ctaButton",
   "logo",
+  "disclosure",
 ] as const;
 export type LayerRole = (typeof LAYER_ROLES)[number];
 
 export const TYPE_STYLE_REFS = ["headline", "subtitle", "body", "cta"] as const;
 export type TypeStyleRef = (typeof TYPE_STYLE_REFS)[number];
+
+/**
+ * When a layer is on screen, independent of its motion:
+ * - "always": the whole scene (motion alone decides — the behaviour before this existed).
+ * - "range": only between `startMs` and `endMs` (null = scene end); hard cuts, no easing.
+ * - "linkedPhoto": while the photo it belongs to is on screen (disclosure layers).
+ */
+export const VISIBILITY_MODES = ["always", "range", "linkedPhoto"] as const;
+export type VisibilityMode = (typeof VISIBILITY_MODES)[number];
+
+export const visibilitySchema = z.object({
+  mode: z.enum(VISIBILITY_MODES).default("always"),
+  startMs: z.number().int().min(0).max(120_000).default(0),
+  endMs: z.number().int().min(0).max(120_000).nullable().default(null),
+});
+export type Visibility = z.infer<typeof visibilitySchema>;
+
+/** Links a disclosure text layer to the photo (asset) and image frame it belongs to. */
+export const disclosureLinkSchema = z.object({
+  assetId: z.uuid(),
+  imageLayerId: z.string().min(1),
+});
+export type DisclosureLink = z.infer<typeof disclosureLinkSchema>;
 
 const baseLayerSchema = z.object({
   id: z.string().min(1),
@@ -48,6 +72,7 @@ const baseLayerSchema = z.object({
   visible: z.boolean().default(true),
   locked: z.boolean().default(false),
   motion: motionConfigSchema.prefault({}),
+  visibility: visibilitySchema.prefault({}),
 });
 
 export const textLayerSchema = baseLayerSchema.extend({
@@ -61,6 +86,11 @@ export const textLayerSchema = baseLayerSchema.extend({
   lineHeight: z.number().min(0.5).max(4).default(1.15),
   color: hexColorSchema,
   align: z.enum(["left", "center", "right"]).default("left"),
+  /**
+   * Set on disclosure layers. The text shown is the linked photo's disclosure wording
+   * (single source of truth in the photo library); `text` keeps the last known copy.
+   */
+  disclosure: disclosureLinkSchema.nullable().default(null),
 });
 
 export const imageFitSchema = z.enum(["cover", "contain", "fill"]);
@@ -149,7 +179,8 @@ export function newLayerId(): string {
   return crypto.randomUUID();
 }
 
-type Defaulted = "id" | "motion" | "rotation" | "opacity" | "visible" | "locked" | "motionFocus";
+type Defaulted =
+  "id" | "motion" | "rotation" | "opacity" | "visible" | "locked" | "motionFocus" | "visibility" | "disclosure";
 type LayerInput<T extends Layer> = Omit<T, Extract<Defaulted, keyof T>> & Partial<Pick<T, Extract<Defaulted, keyof T>>>;
 
 /** Fills common defaults so presets and the editor build layers the same way. */
@@ -161,7 +192,9 @@ export function makeLayer<T extends Layer>(input: LayerInput<T>): T {
     visible: true,
     locked: false,
     motion: defaultMotion(),
+    visibility: { mode: "always", startMs: 0, endMs: null },
     ...(raw.type === "image" ? { motionFocus: null } : {}),
+    ...(raw.type === "text" ? { disclosure: null } : {}),
     ...input,
     id: raw.id ?? newLayerId(),
   } as T;

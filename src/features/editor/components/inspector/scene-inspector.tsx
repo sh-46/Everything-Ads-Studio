@@ -3,8 +3,10 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { LAYOUT_PRESETS, type LayoutPresetId } from "@/domain/layout-presets";
-import { DIMENSION_PRESETS } from "@/domain/scene-templates";
-import { useEditorStore, type EditorScene } from "../../store/editor-store";
+import { DEFAULT_SCENE_DURATION_MS, DIMENSION_PRESETS, DURATION_PRESETS_MS } from "@/domain/scene-templates";
+import { useDisclosureIssues } from "../../hooks/use-disclosure-issues";
+import { IssueRow } from "./disclosure-section";
+import { useActiveScene, useEditorStore, type EditorScene } from "../../store/editor-store";
 import { ColorField, FieldRow, NumberField, Section, SelectField } from "@/components/fields";
 
 export function SceneInspector({ scene }: { scene: EditorScene }) {
@@ -75,8 +77,12 @@ export function SceneInspector({ scene }: { scene: EditorScene }) {
           value={doc.background}
           onChange={(background) => updateDocument({ background }, "scene-background")}
         />
+      </Section>
+
+      <Section title="Duration">
         <NumberField
-          label="Dur"
+          wide
+          label="Length"
           suffix="s"
           min={0.5}
           max={120}
@@ -85,7 +91,27 @@ export function SceneInspector({ scene }: { scene: EditorScene }) {
           value={doc.durationMs / 1000}
           onChange={(seconds) => updateDocument({ durationMs: Math.round(seconds * 1000) }, "scene-duration")}
         />
+        <div className="flex flex-wrap gap-1" role="group" aria-label="Duration presets">
+          {DURATION_PRESETS_MS.map((ms) => (
+            <Button
+              key={ms}
+              variant={doc.durationMs === ms ? "secondary" : "outline"}
+              size="xs"
+              onClick={() => updateDocument({ durationMs: ms })}
+              data-testid={`duration-${ms / 1000}`}
+            >
+              {ms / 1000}s
+            </Button>
+          ))}
+        </div>
+        <p className="text-muted-foreground text-[11px] leading-relaxed">
+          Each scene has its own length; its export uses exactly this duration. New Motion Tiles start at{" "}
+          {DEFAULT_SCENE_DURATION_MS.feed / 1000}s and Facebook Build scenes at {DEFAULT_SCENE_DURATION_MS.intro / 1000}
+          s. Exits “at scene end” and full-length camera motion follow the new length.
+        </p>
       </Section>
+
+      <SceneDisclosureReview />
 
       <Section title="Layout">
         <SelectField
@@ -103,5 +129,29 @@ export function SceneInspector({ scene }: { scene: EditorScene }) {
         </p>
       </Section>
     </div>
+  );
+}
+
+/** Disclosure review for the whole scene (shown when no layer is selected). */
+function SceneDisclosureReview() {
+  const issues = useDisclosureIssues();
+  const scene = useActiveScene();
+  const count = scene?.document.layers.filter((l) => l.type === "text" && l.disclosure).length ?? 0;
+  if (issues.length === 0 && count === 0) return null;
+  return (
+    <Section title="Disclosures">
+      {issues.length === 0 ? (
+        <p className="text-muted-foreground text-[11px]" data-testid="scene-disclosures-ok">
+          {count} {count === 1 ? "disclosure" : "disclosures"} · all checks pass (present, visible, readable, in the
+          safe area).
+        </p>
+      ) : (
+        <ul className="space-y-1" data-testid="scene-disclosure-issues">
+          {issues.map((issue, i) => (
+            <IssueRow key={i} issue={issue} />
+          ))}
+        </ul>
+      )}
+    </Section>
   );
 }

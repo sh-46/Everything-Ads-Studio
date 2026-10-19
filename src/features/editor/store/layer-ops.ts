@@ -38,7 +38,11 @@ export function duplicateLayer(
     role: undefined,
     x: source.x + offset,
     y: source.y + offset,
-  };
+    // A copy of a disclosure is plain text — a photo never gets two linked disclosures.
+    ...(source.type === "text" && source.disclosure
+      ? { disclosure: null, visibility: { mode: "always" as const, startMs: 0, endMs: null } }
+      : {}),
+  } as Layer;
   return { doc: addLayer(doc, copy, index + 1), newId: copy.id };
 }
 

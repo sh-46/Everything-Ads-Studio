@@ -15,6 +15,7 @@ import { useKeyboardShortcuts } from "../hooks/use-keyboard-shortcuts";
 import { useEditorStore, useSelectedLayer } from "../store/editor-store";
 import { AssetLibrary } from "./asset-library";
 import { AddLayerToolbar, ZoomControls } from "./canvas-toolbar";
+import { DisclosureChangeDialog } from "./disclosure-change-dialog";
 import { CanvasModeToggle, EditorPreview } from "./editor-preview";
 import { EditorTopBar } from "./editor-top-bar";
 import { InspectorPanel } from "./inspector/inspector-panel";
@@ -186,6 +187,7 @@ export function EditorShell(props: EditorShellProps) {
 
         <InspectorPanel />
       </div>
+      <DisclosureChangeDialog />
     </div>
   );
 }
