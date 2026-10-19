@@ -11,6 +11,8 @@ import { supabaseEnv } from "@/lib/env";
 
 /** Per-request server client acting as the signed-in user (RLS applies). */
 export async function createClient() {
+  // Auth reads the clock (token expiry); mark the render as request-time first (Cache Components).
+  await connection();
   const cookieStore = await cookies();
   const { url, key } = supabaseEnv();
   return createServerClient(url, key, {

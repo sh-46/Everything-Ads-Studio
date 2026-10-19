@@ -219,7 +219,7 @@ function useSavePreferences(projectId: string) {
     if (!activeSceneId) return;
     const timer = setTimeout(
       () => void saveEditorPreferences({ zoom, lastSceneByProject: { [projectId]: activeSceneId } }).catch(() => {}),
-      1000,
+      500,
     );
     return () => clearTimeout(timer);
   }, [activeSceneId, zoom, projectId]);
