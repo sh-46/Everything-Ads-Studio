@@ -16,11 +16,14 @@
     "test:db": "node supabase/tests/migration-check.mjs"
   },
   "dependencies": {
+    "@remotion/bundler": "4.0.536",
     "@remotion/player": "4.0.536",
+    "@remotion/renderer": "4.0.536",
     "@supabase/ssr": "^0.12.7",
     "@supabase/supabase-js": "^2.118.0",
     "class-variance-authority": "^0.7.1",
     "cn": "^0.5.0",
+    "fflate": "^0.8.3",
     "konva": "^10.9.0",
     "lucide-react": "^1.59.0",
     "next": "16.4.2",

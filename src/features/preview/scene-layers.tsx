@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { createContext, useContext, useMemo, useState } from "react";
 import { Img } from "remotion";
 import type { Asset } from "@/domain/asset";
 import { computeSceneTimings, evaluateMotion, IDENTITY_MOTION } from "@/domain/motion-engine";
@@ -17,6 +17,13 @@ import {
  * Renders a scene document at time `timeMs` as positioned DOM in scene pixels. Used by
  * the Remotion compositions (preview now, MP4 later). Pure function of its props.
  */
+/**
+ * "preview": the in-app Player (shows a faint outline for empty frames, tolerates a
+ * broken image). "render": final output — no helper outlines, and an image that fails
+ * to load fails the render instead of silently disappearing.
+ */
+export const RenderModeContext = createContext<"preview" | "render">("preview");
+
 export function SceneLayers({
   document: doc,
   assets,
@@ -119,8 +126,10 @@ function Media({
   motion: ReturnType<typeof evaluateMotion>;
 }) {
   const [failed, setFailed] = useState(false);
+  const mode = useContext(RenderModeContext);
   if (!asset || failed) {
     // Empty frames are invisible in the final ad; a subtle outline helps while previewing.
+    if (mode === "render") return null;
     return <div style={{ width: "100%", height: "100%", outline: "1px dashed rgba(255,255,255,0.15)" }} />;
   }
   const isLogo = layer.type === "logo";
@@ -145,7 +154,7 @@ function Media({
       <Img
         src={asset.url}
         alt=""
-        onError={() => setFailed(true)}
+        onError={mode === "render" ? undefined : () => setFailed(true)}
         style={{
           position: "absolute",
           left: rect.x,

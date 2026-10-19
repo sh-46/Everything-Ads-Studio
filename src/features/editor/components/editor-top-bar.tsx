@@ -7,6 +7,7 @@ import { DemoBadge } from "@/components/app/demo-badge";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useSaveStatus } from "../hooks/use-autosave";
 import { useEditorStore } from "../store/editor-store";
+import { EditorExportMenu } from "./editor-export-menu";
 
 function SaveIndicator() {
   const { status, message } = useSaveStatus();
@@ -103,9 +104,7 @@ export function EditorTopBar({
         <Button variant="outline" size="sm" asChild>
           <Link href={`/projects/${projectId}/preview`}>Preview</Link>
         </Button>
-        <Button size="sm" asChild>
-          <Link href={`/projects/${projectId}/export`}>Export</Link>
-        </Button>
+        <EditorExportMenu projectId={projectId} />
       </div>
     </header>
   );

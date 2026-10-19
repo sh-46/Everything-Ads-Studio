@@ -1,7 +1,8 @@
 # Everything Ads Studio — Architecture
 
 Status: Milestone 1, Phase 2.5 (photo workflow, brand fonts/logos) and Phase 3 (motion
-engine, Remotion preview) are implemented. Phase 4 (MP4 export) is next.
+engine, Remotion preview) and Phase 4 (local production export, Facebook Experience Preview) are
+implemented. Photo disclosures (Phase 4 addendum) are next.
 
 ## 1. Architecture proposal
 
@@ -126,7 +127,8 @@ Installed: `next`, `react`, `@supabase/supabase-js`, `@supabase/ssr`, `zustand`,
 requires); dev: `vitest`, `prettier`, `prettier-plugin-tailwindcss`, `@electric-sql/pglite` (SQL/RLS
 tests), ESLint, Tailwind 4.
 
-Deferred: `@remotion/renderer`, `@remotion/bundler`, `jszip`/`archiver` (Phase 4), `@playwright/test`
+Phase 4: `@remotion/renderer`, `@remotion/bundler` (same exact Remotion version), `fflate` (streaming ZIP).
+Deferred: `@playwright/test`
 (once a test Supabase project exists; browser checks currently run as ad-hoc scripts).
 
 **Remotion licence:** Remotion is free for individuals and companies of up to 3 people; larger
@@ -143,8 +145,7 @@ decision for the account owner.
 3. **Phase 3 — motion** — done: `MotionConfig` (entrance, continuous, exit, two-image transition,
    sequencing, hold), pure `motion-engine.ts`, Motion inspector, Remotion Player scene preview and
    full-experience mobile preview (Outro + CTA stacked).
-4. **Export** — render worker (Remotion renderer) registering the same `SceneComposition`, consuming
-   `export_jobs`; MP4 per scene, CTA PNG/JPG, ZIP batch, job status UI, pixel-diff tests.
+4. **Phase 4 — export** — done (local): see "Export pipeline" below.
 5. **Copy Assistant** — OEM URL retrieval, cited suggestions, shortening, human review gate.
 6. Not yet scheduled: multi-select, snapping, project-level kit overrides, `project_versions`
    snapshots, workspace invites, periodic signed-URL refresh.
@@ -191,6 +192,29 @@ breaking can still differ slightly between canvas and DOM; Phase 4 adds pixel-di
 - Fonts load via `FontFace` (`use-brand-fonts.ts`); the canvas re-measures text once loaded. Family
   metadata is read from the font's `name`/`OS/2` tables (TTF/OTF/WOFF) or the file name (WOFF2).
 
+### Export pipeline
+
+```
+Export page / editor menu ──POST /api/exports {projectId, sceneId?}──▶ jobs.ts (in-memory queue, 1 at a time)
+   ▲  poll GET /api/exports/:id (status, stage, per-item progress)        │
+   │                                                                     ├─ inputs.ts: validate scene, resolve asset/font URLs, cache key
+   └── GET /api/exports/:id/download[?item=key] (owner-checked)          ├─ renderer.ts: bundle src/remotion once per code version,
+                                                                         │    renderMedia (MP4) / renderStill (CTA PNG), verify output
+                                                                         └─ fflate: stream files into the ZIP (stored)
+```
+
+- `src/remotion/` registers one `Scene` composition whose size/duration come from the document. It renders
+  `SceneLayers` — the component the Remotion Player preview uses — inside `RenderModeContext="render"`
+  (no empty-frame outlines; a missing image fails the render instead of showing a placeholder).
+- Brand fonts are loaded with `FontFace` under `delayRender`; a failed font cancels the render.
+- `src/domain/export-plan.ts` decides the package contents and file names (sanitized, unique);
+  `src/domain/export-settings.ts` holds the MP4 settings (H.264 High, level by size, yuv420p, CFR 30, 5 Mbps
+  target with 6 Mbps VBV cap).
+- Cache key: sha256 of render version + settings + document + used assets (stable URL, size) + fonts.
+- Reliability: same request while active → same job; watchdog cancels a render with no progress for 90 s;
+  temp files are renamed into place only after verification; old jobs/cache are cleaned on each run.
+- Replaceable later by a worker host consuming `export_jobs` behind the same API routes.
+
 ## 6. Technical risks & dependencies
 
 - **Konva ↔ Remotion parity.** Canvas text layout (line breaking, letter spacing,
@@ -199,9 +223,10 @@ breaking can still differ slightly between canvas and DOM; Phase 4 adds pixel-di
   render text in the Remotion composition with the same canvas text routine.
 - **Fonts.** Brand fonts load via FontFace in the editor and preview; the Phase 4 worker must load
   the same files before rendering. OEM font licences may restrict web embedding.
-- **Rendering infrastructure.** Remotion rendering needs Chromium + ffmpeg; it cannot run
-  inside a Vercel function for long renders. Needs a worker host (Fly/Render/ECS or
-  Remotion Lambda) and a Remotion company license if the org exceeds the free tier.
+- **Rendering infrastructure.** Rendering runs locally inside the Next server (Chrome + Remotion's ffmpeg).
+  It cannot run inside a Vercel function for long renders; a deployed version needs a worker host
+  (no paid cloud rendering service has been introduced). Remotion needs a company licence if the
+  organization exceeds the free tier — flagged for the owner's review.
 - **Signed URL expiry** — signed URLs last 6 h; automatic refresh is not implemented yet, so a
   very long editing session needs a page reload.
 - **Large uploads** go browser → Storage directly (bypasses Vercel body limits); image

@@ -8,22 +8,23 @@ Architecture, schema, roadmap and risks: [docs/ARCHITECTURE.md](docs/ARCHITECTUR
 ## Status
 
 Milestone 1 (vertical slice) plus **Phase 2.5 (photo workflow, Brand Kit fonts & logos)** and
-**Phase 3 (motion engine & preview)**.
+**Phase 3 (motion engine & preview)** and **Phase 4 (local production export & Facebook Experience Preview)**.
 
-| Area                                                                                                                                                                                            | State                                  |
-| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------- |
-| Auth, workspace, dashboard, brands, Brand Kit, project CRUD                                                                                                                                     | Built                                  |
-| Scene editor: text / image / gradient / shape / logo layers, drag, resize, rotate, inspector, undo/redo, shortcuts, layout presets                                                              | Built                                  |
-| Autosave with Saving / Saved / Error, retry, revision conflict resolution                                                                                                                       | Built                                  |
-| Photo workflow: batch upload, project photo library, Add Image (upload / library / empty frame), canvas drag-and-drop, Replace / Remove keeping layout & motion, safe delete with usage warning | Built                                  |
-| Scenes Overview: photo slots per scene (1–2 photos; CTA optional), assign / replace / remove before opening the editor                                                                          | Built                                  |
-| Brand Kit fonts (TTF/OTF/WOFF/WOFF2, FontFace loading, metadata detection + correction) and Logo Library (SVG/PNG/WebP, variants)                                                               | Built                                  |
-| Motion: entrance, continuous image motion, exit, two-image transitions, sequencing, timing — Motion inspector                                                                                   | Built                                  |
-| Scene Preview (Remotion Player: play, pause, restart, scrub) and Full Experience mobile preview incl. Outro + CTA                                                                               | Built                                  |
-| Scene duplication                                                                                                                                                                               | Built                                  |
-| Multi-select, snapping, workspace invites                                                                                                                                                       | Not started                            |
-| MP4 / PNG / ZIP export (render worker)                                                                                                                                                          | Phase 4 — export buttons stay disabled |
-| Copy Assistant                                                                                                                                                                                  | Phase 5                                |
+| Area                                                                                                                                                                                            | State                  |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------- |
+| Auth, workspace, dashboard, brands, Brand Kit, project CRUD                                                                                                                                     | Built                  |
+| Scene editor: text / image / gradient / shape / logo layers, drag, resize, rotate, inspector, undo/redo, shortcuts, layout presets                                                              | Built                  |
+| Autosave with Saving / Saved / Error, retry, revision conflict resolution                                                                                                                       | Built                  |
+| Photo workflow: batch upload, project photo library, Add Image (upload / library / empty frame), canvas drag-and-drop, Replace / Remove keeping layout & motion, safe delete with usage warning | Built                  |
+| Scenes Overview: photo slots per scene (1–2 photos; CTA optional), assign / replace / remove before opening the editor                                                                          | Built                  |
+| Brand Kit fonts (TTF/OTF/WOFF/WOFF2, FontFace loading, metadata detection + correction) and Logo Library (SVG/PNG/WebP, variants)                                                               | Built                  |
+| Motion: entrance, continuous image motion, exit, two-image transitions, sequencing, timing — Motion inspector                                                                                   | Built                  |
+| Scene Preview (Remotion Player: play, pause, restart, scrub) and Facebook mobile preview (feed → Learn More → Build, Outro + CTA)                                                               | Built                  |
+| Scene duplication                                                                                                                                                                               | Built                  |
+| Multi-select, snapping, workspace invites                                                                                                                                                       | Not started            |
+| Export: Creative Package ZIP (Motion Tile + Facebook Build), single-scene MP4/PNG, job progress, retry, render cache                                                                            | Built (local renderer) |
+| Photo disclosures (addendum)                                                                                                                                                                    | Next                   |
+| Copy Assistant                                                                                                                                                                                  | Phase 5                |
 
 ## Setup
 
@@ -104,6 +105,52 @@ http://localhost:3001/projects/d0000000-0000-4000-8000-0000000001a1.
 **Brand fonts and logos** — Brands → Acura (Sample) → Brand Kit → _Brand fonts_ / _Logo library_. Upload, correct
 family/weight/style if needed, then pick the font in Typography or in the editor's Font menu. Place logos with
 the ✦ (Add logo) button in the editor.
+
+## Exporting (Phase 4)
+
+Project → **Export** ("Ready to Export"), or the editor's **Export** menu for the current scene. The preview is
+optional; you can export without opening it.
+
+**Export Creative Package** produces `{Brand}_{Model}_EverythingAds.zip`:
+
+```
+Motion_Tile/{Brand}_{Model}_Motion_Tile_1080x1080.mp4
+Facebook_Build/01_Intro_1080x1920.mp4
+Facebook_Build/02_Exterior_1080x1920.mp4
+Facebook_Build/03_Interior_1080x1920.mp4
+Facebook_Build/04_Performance_1080x1920.mp4
+Facebook_Build/05_Outro_1080x1620.mp4
+Facebook_Build/06_CTA_1080x300.png
+```
+
+- **MP4 settings (all MP4s, package and single):** H.264 High profile (level chosen from the frame size, 4.0 for
+  1080×1920), yuv420p, constant 30 fps, target 5 Mbps average (VBV max 6 Mbps), resolution and duration match
+  the scene, `moov` at the start (faststart). Defined once in `src/domain/export-settings.ts`. The measured
+  bitrate of each file is shown next to the target; simple scenes can encode below 5 Mbps.
+- **CTA still-frame policy:** the CTA PNG is the static, fully-entered layout (what the Scene Editor shows),
+  rendered by the same composition with animation ignored.
+- **How it renders:** the Next server bundles `src/remotion` (the same `SceneLayers` + motion engine the
+  preview uses) and renders it with `@remotion/renderer` in a local Chrome + ffmpeg. One job at a time;
+  identical scenes are reused from a cache; files live in the OS temp folder (`everything-ads-exports`) and
+  expire after 6 h (cache 24 h). Jobs are in memory — a server restart drops them. Each file is checked after
+  rendering (codec, size, fps, duration / PNG size) and a hung browser fails the job instead of hanging it.
+- **Browser:** uses `/Applications/Google Chrome.app` when present (Remotion's downloaded headless shell did not
+  start on this macOS). Override with `REMOTION_BROWSER_EXECUTABLE=/path/to/chrome`, or `headless-shell` to
+  use Remotion's own.
+- Rendering takes roughly 45–60 s per 6-second 1080×1920 scene on this machine; a full package ≈ 5 min.
+- No database migration: the existing `export_jobs` table is unused for now (jobs are local and in memory).
+- Works in Demo Mode (no Supabase).
+
+**Facebook mobile preview** (Project → Preview): a phone with a feed and a sponsored dealership post playing the
+Motion Tile. **Learn More** opens the Facebook Build in the phone (Intro → Exterior → Interior → Performance →
+Outro + CTA stacked); scroll through it, then **Back** returns to the same place in the feed. It's an internal
+simulation and is never part of an export.
+
+**Remotion licence — needs your review.** Remotion (player, bundler, renderer) is source-available, not
+open source. Its licence is free for individuals and for companies of up to 3 employees, including
+commercial use; larger organizations need a paid company licence. This project is described as personal and
+non-commercial, but it runs under a work account (`helloconstellation.com`), so please confirm which case
+applies. No licence key is set (`licenseKey: null`) and nothing is acknowledged on your behalf.
 
 ## Scripts
 

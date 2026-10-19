@@ -1,4 +1,4 @@
-import { PenTool } from "lucide-react";
+import { Package, PenTool } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -31,21 +31,33 @@ async function PreviewPageContent({ params }: PageProps<"/projects/[projectId]/p
     <>
       <PageHeader
         title="Preview"
-        description="Animated preview of the saved scenes. Changes made in the editor appear here once saved."
+        description="Optional — preview the Motion Tile in a mobile feed and the Facebook Build, or skip straight to export."
         crumbs={[
           { label: project.brandName, href: `/brands/${project.brandId}` },
           { label: project.name, href: `/projects/${project.id}` },
           { label: "Preview" },
         ]}
         actions={
-          <Button asChild size="sm" variant="outline">
-            <Link href={`/projects/${project.id}/editor`}>
-              <PenTool /> Open editor
-            </Link>
-          </Button>
+          <>
+            <Button asChild size="sm" variant="outline">
+              <Link href={`/projects/${project.id}/editor`}>
+                <PenTool /> Open editor
+              </Link>
+            </Button>
+            <Button asChild size="sm">
+              <Link href={`/projects/${project.id}/export`}>
+                <Package /> Export Creative Package
+              </Link>
+            </Button>
+          </>
         }
       />
-      <ExperiencePreview scenes={scenes} assets={[...photos, ...kitAssets]} brandName={project.brandName} />
+      <ExperiencePreview
+        scenes={scenes}
+        assets={[...photos, ...kitAssets]}
+        brandName={project.brandName}
+        projectName={project.name}
+      />
     </>
   );
 }
