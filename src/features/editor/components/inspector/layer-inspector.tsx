@@ -242,8 +242,12 @@ function TextSection({ layer, update }: { layer: TextLayer; update: Update }) {
 
 function ImageSection({ layer, update }: { layer: ImageLayer; update: Update }) {
   return (
-    <MediaSource layer={layer}>
+    <MediaSource layer={layer} title="Image framing">
+      <p className="text-muted-foreground text-[11px] leading-relaxed">
+        Static crop of the photo in its frame — it doesn’t animate. For animated zoom or pan, use Camera motion below.
+      </p>
       <SelectField
+        wide
         label="Fit"
         value={layer.fit}
         options={[
@@ -254,7 +258,8 @@ function ImageSection({ layer, update }: { layer: ImageLayer; update: Update }) 
         onChange={(fit) => update({ fit }, "fit")}
       />
       <RangeField
-        label="Zoom"
+        wide
+        label="Static zoom"
         min={1}
         max={5}
         step={0.01}
@@ -263,6 +268,7 @@ function ImageSection({ layer, update }: { layer: ImageLayer; update: Update }) 
         format={(v) => `${v.toFixed(2)}×`}
       />
       <RangeField
+        wide
         label="Pan X"
         min={0}
         max={1}
@@ -272,6 +278,7 @@ function ImageSection({ layer, update }: { layer: ImageLayer; update: Update }) 
         format={(v) => `${Math.round(v * 100)}%`}
       />
       <RangeField
+        wide
         label="Pan Y"
         min={0}
         max={1}

@@ -84,7 +84,7 @@ export function assignScenePhoto(
     motion: {
       ...photoMotion(kit),
       delayMs: Math.round(doc.durationMs * 0.45),
-      transition: { preset: "crossfade", durationMs: 800, easing: "easeInOutCubic", direction: "left" },
+      transition: { preset: "crossfade", durationMs: 800, easing: "easeInOut", direction: "left" },
     },
   });
   const index = slot1 ? doc.layers.findIndex((l) => l.id === slot1.id) + 1 : 0;
@@ -129,4 +129,27 @@ export function aspectFrame(
     width: Math.max(1, Math.round(width)),
     height: Math.max(1, Math.round(height)),
   };
+}
+
+function overlapRatio(a: { x: number; y: number; width: number; height: number }, b: typeof a): number {
+  const w = Math.max(0, Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x));
+  const h = Math.max(0, Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y));
+  const union = a.width * a.height + b.width * b.height - w * h;
+  return union > 0 ? (w * h) / union : 0;
+}
+
+/**
+ * The Photo 1 → Photo 2 pair used by the Photo Transition controls: the main photo plus
+ * a photo stacked above it in (nearly) the same frame. Side-by-side photos (e.g. the
+ * Two-image split layout) are not a transition pair.
+ */
+export function photoPair(doc: SceneDocument): { photo1?: ImageLayer; photo2?: ImageLayer } {
+  const { slot1 } = scenePhotoLayers(doc);
+  if (!slot1) return {};
+  const index1 = doc.layers.indexOf(slot1);
+  const above = doc.layers.slice(index1 + 1).filter(isImage);
+  const photo2 =
+    above.find((l) => l.role === "secondaryImage" && overlapRatio(l, slot1) >= 0.8) ??
+    above.find((l) => overlapRatio(l, slot1) >= 0.8);
+  return { photo1: slot1, photo2 };
 }

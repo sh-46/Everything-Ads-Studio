@@ -182,7 +182,7 @@ function build(presetId: LayoutPresetId, ctx: Ctx): Layer[] {
         imageLayer(ctx, "secondaryImage", { x: 0, y: 0, width: W, height: H }, "Photo 2 (after Photo 1)", {
           ...photoMotion(ctx.kit),
           delayMs: 2600,
-          transition: { preset: "crossfade", durationMs: 800, easing: "easeInOutCubic", direction: "left" },
+          transition: { preset: "crossfade", durationMs: 800, easing: "easeInOut", direction: "left" },
         }),
         scrimLayer(ctx, { x: 0, y: Math.round(H * 0.45), width: W, height: H - Math.round(H * 0.45) }, ctx.kit.scrim),
         ...textBlock(ctx, { bottom: H - ctx.margin * 1.5 }, "left"),

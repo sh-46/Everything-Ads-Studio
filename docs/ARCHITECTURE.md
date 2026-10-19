@@ -66,6 +66,10 @@ See `supabase/migrations/0001_init.sql` (authoritative). Summary:
 weight, style), a check that logos/fonts are brand-level, and the `asset_usage(asset_id)` function
 (SECURITY INVOKER) used to warn before deleting files that scenes still use. No policy changes.
 
+`0003_motion_presets.sql` adds `model_projects.motion_presets` (JSONB array, ≤ 100), the
+`save_motion_preset` / `delete_motion_preset` functions (SECURITY INVOKER, atomic upsert/delete by preset
+id) and updates `duplicate_model_project` to copy presets. No policy changes.
+
 Security changes made by the migration (explained here as required):
 
 - RLS **enabled** on every public table; no policies for `anon`.
@@ -156,6 +160,15 @@ decision for the account owner.
 - The Konva canvas shows the static, fully-entered layout; animation is rendered only by Remotion
   (`features/preview`), which is what the Phase 4 renderer will reuse.
 - Brand Kit `motionDefaults` are copied onto layers at creation; later kit edits don't touch them.
+- Entrance = `fade` (bool) + `move` (none / slide ×4 / scaleIn), so any combination is expressible. The
+  earlier single `preset` (whose slides and scale also faded) migrates on parse to the identical combination.
+- Easing: Linear, Ease In / Ease Out / Ease In Out (cubic), Spring (damped, ζ 0.65, ~7% overshoot; opacity
+  is clamped, movement may overshoot). Legacy `easeOutCubic` / `easeInOutCubic` map to the identical curves.
+- Camera motion (`continuous`) has its own easing; `cameraCoverage()` samples it to detect blank edges.
+- Photo 1 → Photo 2: `photoPair()` finds a photo stacked over the main photo in (nearly) the same frame; the
+  transition is stored on Photo 2 (`motion.transition` + its start time).
+- Motion presets (`motion-presets.ts`) copy timing, entrance, camera motion and exit onto a layer — never the
+  transition — and are never live-linked.
 
 ### Render consistency (Konva ↔ Remotion)
 

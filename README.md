@@ -31,9 +31,10 @@ Requirements: Node 20.9+ and a Supabase project.
 
 1. `npm install`
 2. Apply the database migrations in order: open the Supabase SQL editor and run
-   `supabase/migrations/0001_init.sql`, then `0002_brand_assets.sql` (or `supabase db push` with the
-   Supabase CLI). 0001 creates tables, RLS policies, RPCs and the private `assets` bucket; 0002 adds
-   logo/font metadata and the `asset_usage` check. Each file starts with a security summary.
+   `supabase/migrations/0001_init.sql`, `0002_brand_assets.sql`, then `0003_motion_presets.sql` (or
+   `supabase db push` with the Supabase CLI). 0001 creates tables, RLS policies, RPCs and the private `assets`
+   bucket; 0002 adds logo/font metadata and the `asset_usage` check; 0003 adds project motion presets. Each
+   file starts with a security summary.
 3. `cp .env.example .env.local` and fill in `NEXT_PUBLIC_SUPABASE_URL` and
    `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` (Project Settings → API). Never add the service-role key.
 4. Optional: in Supabase Auth settings, disable "Confirm email" for faster local testing, or set the
@@ -76,11 +77,24 @@ http://localhost:3001/projects/d0000000-0000-4000-8000-0000000001a1.
 
 **Motion**
 
-1. Select a layer → **Motion** in the inspector: Start (scene start / with previous / after previous), Delay,
-   Entrance, Continuous image motion (photos and logos), Two-image transition (photos), Exit, Hold.
-2. **Preview** (inspector) or **Preview motion** (bottom bar) plays the current scene with Remotion: play, pause,
-   restart, scrub. Edits apply live.
-3. **Preview** in the top bar opens the Full experience (phone mockup — scroll or jump between scenes; the scene
+1. Select a layer → **Motion** in the inspector:
+   - **Starts** (scene start / with / after previous layer) and **Delay**.
+   - **Entrance**: tick **Fade in** and/or pick a **Movement** (Slide Up/Down/Left/Right, Scale In) — e.g.
+     Fade In + Slide Up, or Slide Up only. Duration and **Ease** (Linear, Ease In, Ease Out, Ease In Out (Easy
+     Ease), Spring) with a curve preview.
+   - **Camera motion** (photos/logos): animated zoom or pan with its own duration and easing, separate from the
+     static **Image framing** above. A warning (with **Fix**) appears if the motion would show blank edges.
+   - **Photo transition** (on either photo of a Photo 1 → Photo 2 pair): Cut, Crossfade, Slide, Zoom; start
+     time, duration, easing, direction. With one photo, **Add second photo…** sets up the pair.
+   - **Exit** and **Hold**; **Timing overview** shows when each phase runs and warns if it overruns the scene.
+   - ↺ on each section resets it to the default (Brand Kit defaults for text/logos).
+2. **Replay** (Motion header) opens the preview at that layer's start. While previewing, editing a motion value
+   replays the layer automatically. **Preview motion** (bottom bar) plays the whole scene: play, pause, restart,
+   scrub.
+3. **Presets** (Motion header): starter presets (Headline — Fade In + Slide Up, Subtitle — Delayed Fade In,
+   Vehicle Photo — Slow Zoom In, Logo — Fade In), **Save current motion as preset…** (shared across the
+   project's scenes) and **Apply this motion to all headlines/subtitles/…** in the project.
+4. **Preview** in the top bar opens the Full experience (phone mockup — scroll or jump between scenes; the scene
    in view plays, Outro + CTA shown together) and a per-scene preview.
 
 **Brand fonts and logos** — Brands → Acura (Sample) → Brand Kit → _Brand fonts_ / _Logo library_. Upload, correct

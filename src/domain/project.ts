@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { exportConfigSchema } from "./export-config";
+import { motionPresetListSchema } from "./motion-presets";
 
 export const PROJECT_STATUSES = ["draft", "in_review", "approved"] as const;
 export type ProjectStatus = (typeof PROJECT_STATUSES)[number];
@@ -19,6 +20,8 @@ export const modelProjectSchema = z.object({
   modelName: z.string().min(1).max(120),
   status: z.enum(PROJECT_STATUSES),
   exportConfig: exportConfigSchema,
+  /** Project-level reusable motion settings. */
+  motionPresets: motionPresetListSchema.default([]),
   revision: z.number().int().min(1),
   lastEditedAt: z.string(),
   archivedAt: z.string().nullable(),

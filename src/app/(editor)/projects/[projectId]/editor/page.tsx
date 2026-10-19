@@ -40,6 +40,7 @@ async function EditorPageContent({ params, searchParams }: PageProps<"/projects/
       brandId={brand.id}
       brandName={brand.name}
       kit={brand.kit}
+      motionPresets={project.motionPresets}
       scenes={scenes}
       initialSceneId={typeof requestedScene === "string" ? requestedScene : undefined}
       assets={assets}

@@ -1,10 +1,18 @@
 import { z } from "zod";
 import { hexColorSchema } from "./color";
 import { gradientFillSchema } from "./gradient";
-import { CONTINUOUS_PRESETS, easingSchema, ENTRANCE_PRESETS } from "./motion";
+import { CONTINUOUS_PRESETS, easingSchema, ENTRANCE_MOVES, migrateEntrance } from "./motion";
 import { TYPE_STYLE_REFS, type TypeStyleRef } from "./scene";
 
 export const BRAND_KIT_SCHEMA_VERSION = 1;
+
+/** Kits saved before combinable entrances stored a single `entrancePreset`. */
+function migrateKitMotion(value: unknown): unknown {
+  if (!value || typeof value !== "object" || !("entrancePreset" in value)) return value;
+  const { entrancePreset, ...rest } = value as Record<string, unknown>;
+  const migrated = migrateEntrance({ preset: entrancePreset }) as { fade: boolean; move: string };
+  return { ...rest, entranceFade: migrated.fade, entranceMove: migrated.move };
+}
 
 export const typeStyleSchema = z.object({
   fontFamily: z.string().min(1),
@@ -47,13 +55,18 @@ export const brandKitSchema = z.object({
     cornerRadius: z.number().min(0).max(200),
   }),
   /** Applied when layers are created; never re-applied to existing layers. */
-  motionDefaults: z.object({
-    entrancePreset: z.enum(ENTRANCE_PRESETS),
-    entranceDurationMs: z.number().int().min(0).max(20_000),
-    easing: easingSchema,
-    /** Continuous motion for new photo layers. */
-    photoMotion: z.enum(CONTINUOUS_PRESETS).default("slowZoomIn"),
-  }),
+  motionDefaults: z.preprocess(
+    migrateKitMotion,
+    z.object({
+      /** Entrance for new text and logo layers: fade and/or movement. */
+      entranceFade: z.boolean(),
+      entranceMove: z.enum(ENTRANCE_MOVES),
+      entranceDurationMs: z.number().int().min(0).max(20_000),
+      easing: easingSchema,
+      /** Continuous motion for new photo layers. */
+      photoMotion: z.enum(CONTINUOUS_PRESETS).default("slowZoomIn"),
+    }),
+  ),
   /** Tokens: {brand} {year} {model} {scene} {width} {height}. */
   exportNaming: z.object({
     pattern: z.string().min(1).max(200),
@@ -106,9 +119,10 @@ export function defaultBrandKit(): BrandKit {
     },
     cta: { label: "Learn More", background: "#FFFFFF", textColor: "#0B0B0C", cornerRadius: 12 },
     motionDefaults: {
-      entrancePreset: "fadeIn",
-      entranceDurationMs: 600,
-      easing: "easeOutCubic",
+      entranceFade: true,
+      entranceMove: "slideUp",
+      entranceDurationMs: 700,
+      easing: "easeOut",
       photoMotion: "slowZoomIn",
     },
     exportNaming: { pattern: "{brand}_{year}_{model}_{scene}_{width}x{height}" },

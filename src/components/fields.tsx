@@ -35,6 +35,7 @@ const inputClass =
 
 export function NumberField({
   label,
+  wide = false,
   value,
   onChange,
   min,
@@ -45,6 +46,8 @@ export function NumberField({
   disabled,
 }: {
   label: string;
+  /** Wider label column for longer, clearer labels. */
+  wide?: boolean;
   value: number;
   onChange: (value: number) => void;
   min?: number;
@@ -75,7 +78,7 @@ export function NumberField({
 
   return (
     <label htmlFor={id} className="flex items-center gap-1.5">
-      <span className="text-muted-foreground w-9 shrink-0 text-[11px]" title={label}>
+      <span className={cn("text-muted-foreground shrink-0 text-[11px]", wide ? "w-16" : "w-9")} title={label}>
         {label}
       </span>
       <div className="relative min-w-0 flex-1">
@@ -162,18 +165,21 @@ export function ColorField({
 
 export function SelectField<T extends string>({
   label,
+  wide = false,
   value,
   options,
   onChange,
 }: {
   label: string;
+  /** Wider label column for longer, clearer labels. */
+  wide?: boolean;
   value: T;
   options: readonly { value: T; label: string }[];
   onChange: (value: T) => void;
 }) {
   return (
     <div className="flex items-center gap-1.5">
-      <span className="text-muted-foreground w-9 shrink-0 text-[11px]">{label}</span>
+      <span className={cn("text-muted-foreground shrink-0 text-[11px]", wide ? "w-16" : "w-9")}>{label}</span>
       <Select value={value} onValueChange={(v) => onChange(v as T)}>
         <SelectTrigger size="sm" className="h-7 w-full min-w-0 text-xs" aria-label={label}>
           <SelectValue />
@@ -192,6 +198,7 @@ export function SelectField<T extends string>({
 
 export function RangeField({
   label,
+  wide = false,
   value,
   onChange,
   min,
@@ -200,6 +207,8 @@ export function RangeField({
   format = (v) => v.toFixed(2),
 }: {
   label: string;
+  /** Wider label column for longer, clearer labels. */
+  wide?: boolean;
   value: number;
   onChange: (value: number) => void;
   min: number;
@@ -210,7 +219,11 @@ export function RangeField({
   const id = useId();
   return (
     <div className="flex items-center gap-1.5">
-      <label htmlFor={id} className="text-muted-foreground w-9 shrink-0 text-[11px]" title={label}>
+      <label
+        htmlFor={id}
+        className={cn("text-muted-foreground shrink-0 text-[11px]", wide ? "w-16" : "w-9")}
+        title={label}
+      >
         {label}
       </label>
       <input

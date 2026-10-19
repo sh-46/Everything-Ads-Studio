@@ -55,7 +55,9 @@ export function useKeyboardShortcuts() {
 
       const layerId = store.selectedLayerId;
       if (e.key === "Escape") {
-        store.selectLayer(null);
+        // Escape closing a menu, dialog or dropdown shouldn't also deselect the layer.
+        const overlayOpen = document.querySelector("[role=menu], [role=dialog], [role=listbox]");
+        if (!e.defaultPrevented && !overlayOpen) store.selectLayer(null);
         return;
       }
       if (!layerId) return;

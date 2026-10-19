@@ -2,7 +2,14 @@ import { describe, expect, it } from "vitest";
 import { brandKitSchema, defaultBrandKit, type BrandKit } from "./brand-kit";
 import { applyLayoutPreset } from "./layout-presets";
 import { sceneDocumentSchema, type ImageLayer } from "./scene";
-import { aspectFrame, assignScenePhoto, referencedAssetIds, sceneAssetIds, scenePhotoLayers } from "./scene-photos";
+import {
+  aspectFrame,
+  assignScenePhoto,
+  photoPair,
+  referencedAssetIds,
+  sceneAssetIds,
+  scenePhotoLayers,
+} from "./scene-photos";
 import { ctaDocument, defaultProjectScenes } from "./scene-templates";
 
 const kit = defaultBrandKit();
@@ -102,11 +109,42 @@ describe("brand kit motion defaults", () => {
   });
 
   it("new scenes copy the defaults onto layers (not references)", () => {
-    const custom: BrandKit = { ...kit, motionDefaults: { ...kit.motionDefaults, entrancePreset: "slideUp" } };
+    const custom: BrandKit = {
+      ...kit,
+      motionDefaults: { ...kit.motionDefaults, entranceFade: false, entranceMove: "scaleIn" },
+    };
     const doc = defaultProjectScenes(custom)[0].document;
     const headline = doc.layers.find((l) => l.role === "headline")!;
-    expect(headline.motion.entrance.preset).toBe("slideUp");
-    custom.motionDefaults.entrancePreset = "fadeIn";
-    expect(headline.motion.entrance.preset).toBe("slideUp");
+    expect(headline.motion.entrance).toMatchObject({ fade: false, move: "scaleIn" });
+    custom.motionDefaults.entranceMove = "slideDown";
+    expect(headline.motion.entrance.move).toBe("scaleIn");
+  });
+
+  it("kits saved with a single entrancePreset migrate", () => {
+    const old = structuredClone(defaultBrandKit()) as unknown as Record<string, Record<string, unknown>>;
+    delete old.motionDefaults.entranceFade;
+    delete old.motionDefaults.entranceMove;
+    old.motionDefaults.entrancePreset = "fadeIn";
+    old.motionDefaults.easing = "easeOutCubic";
+    const parsed = brandKitSchema.parse(old).motionDefaults;
+    expect(parsed).toMatchObject({ entranceFade: true, entranceMove: "none", easing: "easeOut" });
+  });
+});
+
+describe("photoPair", () => {
+  it("pairs Photo 2 only when it shares Photo 1's frame", () => {
+    const doc = assignScenePhoto(assignScenePhoto(interior(), 1, A, kit), 2, B, kit);
+    const pair = photoPair(doc);
+    expect(pair.photo1?.assetId).toBe(A);
+    expect(pair.photo2?.assetId).toBe(B);
+  });
+
+  it("side-by-side photos (Two-image split) are not a transition pair", () => {
+    const split = applyLayoutPreset(assignScenePhoto(interior(), 1, A, kit), "twoImageSplit", kit);
+    expect(photoPair(split).photo2).toBeUndefined();
+  });
+
+  it("a single photo has no pair", () => {
+    expect(photoPair(interior()).photo2).toBeUndefined();
   });
 });

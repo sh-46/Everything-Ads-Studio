@@ -14,7 +14,15 @@ import { useEditorStore } from "../../store/editor-store";
  * Replacing only swaps `assetId`: frame, crop, rotation, opacity, order and motion stay.
  * Removing unassigns the file from this layer; the file stays in the library.
  */
-export function MediaSource({ layer, children }: { layer: ImageLayer | LogoLayer; children?: React.ReactNode }) {
+export function MediaSource({
+  layer,
+  title,
+  children,
+}: {
+  layer: ImageLayer | LogoLayer;
+  title?: string;
+  children?: React.ReactNode;
+}) {
   const assets = useEditorStore((s) => s.assets);
   const addAsset = useEditorStore((s) => s.addAsset);
   const updateLayer = useEditorStore((s) => s.updateLayer);
@@ -25,7 +33,7 @@ export function MediaSource({ layer, children }: { layer: ImageLayer | LogoLayer
   const missing = layer.assetId && !asset;
 
   return (
-    <Section title={kind === "logo" ? "Logo" : "Image"}>
+    <Section title={title ?? (kind === "logo" ? "Logo" : "Image")}>
       <div className="flex items-center gap-2">
         <div className="border-border bg-muted h-10 w-10 shrink-0 overflow-hidden rounded-md border">
           {asset && <AssetThumb asset={asset} />}

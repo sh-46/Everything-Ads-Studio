@@ -9,6 +9,7 @@ import {
 } from "@/domain/asset";
 import { brandKitSchema, defaultBrandKit, type BrandKit } from "@/domain/brand-kit";
 import { defaultExportConfig } from "@/domain/export-config";
+import type { MotionPreset } from "@/domain/motion-presets";
 import type { ProjectMetaInput, ProjectStatus } from "@/domain/project";
 import type { ImageLayer, Scene, SceneDocument, SceneKind, TextLayer } from "@/domain/scene";
 import { defaultProjectScenes } from "@/domain/scene-templates";
@@ -167,6 +168,7 @@ function addProject(
     modelName: input.modelName,
     status: input.status,
     exportConfig: defaultExportConfig(),
+    motionPresets: [],
     revision: 1,
     lastEditedAt: now(input.editedMinutesAgo),
     archivedAt: null,
@@ -266,7 +268,7 @@ function seed(): DemoDb {
 }
 
 // Versioned so a dev server running older code reseeds instead of reusing a stale shape.
-const globalKey = "__everythingAdsDemoStore_v2" as const;
+const globalKey = "__everythingAdsDemoStore_v3" as const;
 type GlobalWithDemo = typeof globalThis & { [globalKey]?: DemoDb };
 
 function db(): DemoDb {
@@ -567,4 +569,20 @@ export function demoDuplicateScene(sourceSceneId: string, name: string, document
   };
   store.scenes.set(scene.id, scene);
   return copy(scene);
+}
+
+// ----------------------------------------------------------------- motion presets
+
+export function demoSaveMotionPreset(projectId: string, preset: MotionPreset): MotionPreset[] | null {
+  const project = db().projects.get(projectId);
+  if (!project) return null;
+  project.motionPresets = [...project.motionPresets.filter((p) => p.id !== preset.id), copy(preset)];
+  return copy(project.motionPresets);
+}
+
+export function demoDeleteMotionPreset(projectId: string, presetId: string): MotionPreset[] | null {
+  const project = db().projects.get(projectId);
+  if (!project) return null;
+  project.motionPresets = project.motionPresets.filter((p) => p.id !== presetId);
+  return copy(project.motionPresets);
 }

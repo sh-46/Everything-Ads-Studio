@@ -1,5 +1,6 @@
-import type { Direction, Easing, MotionConfig } from "./motion";
-import type { Layer } from "./scene";
+import { fitImageRect, type Size } from "./geometry";
+import { hasEntrance, type Direction, type Easing, type MotionConfig } from "./motion";
+import type { ImageLayer, Layer, LogoLayer } from "./scene";
 
 /**
  * Deterministic, frame-based motion evaluation. Given a scene's layers and a time, it
@@ -19,15 +20,26 @@ export function msToFrames(ms: number, fps: number): number {
   return Math.max(1, Math.round((ms / 1000) * fps));
 }
 
+/** Damped spring (ζ = 0.65): ~7% overshoot, settled well before t = 1. */
+const SPRING_DAMPING = 0.65;
+const SPRING_FREQUENCY = 12;
+function spring(t: number): number {
+  if (t >= 1) return 1;
+  const zeta = SPRING_DAMPING;
+  const omega = SPRING_FREQUENCY;
+  const damped = omega * Math.sqrt(1 - zeta * zeta);
+  return 1 - Math.exp(-zeta * omega * t) * (Math.cos(damped * t) + ((zeta * omega) / damped) * Math.sin(damped * t));
+}
+
 const EASING_FNS: Record<Easing, (t: number) => number> = {
   linear: (t) => t,
-  easeIn: (t) => t * t,
-  easeOut: (t) => 1 - (1 - t) * (1 - t),
-  easeInOut: (t) => (t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2),
-  easeOutCubic: (t) => 1 - Math.pow(1 - t, 3),
-  easeInOutCubic: (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2),
+  easeIn: (t) => t * t * t,
+  easeOut: (t) => 1 - Math.pow(1 - t, 3),
+  easeInOut: (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2),
+  spring,
 };
 
+/** Eased progress. Spring may exceed 1 briefly (overshoot); all others stay in 0–1. */
 export function ease(easing: Easing, t: number): number {
   return EASING_FNS[easing](clamp01(t));
 }
@@ -58,7 +70,7 @@ function usesTransition(layer: Layer): boolean {
 
 function entranceDuration(layer: Layer): number {
   if (usesTransition(layer)) return layer.motion.transition.durationMs;
-  return layer.motion.entrance.preset === "none" ? 0 : layer.motion.entrance.durationMs;
+  return hasEntrance(layer.motion.entrance) ? layer.motion.entrance.durationMs : 0;
 }
 
 /**
@@ -141,16 +153,18 @@ function directionVector(direction: Direction): [number, number] {
 }
 
 function applyEntrance(state: MotionState, m: MotionConfig, timing: LayerTiming, t: number) {
-  const { preset, durationMs, easing, distance, scaleStart } = m.entrance;
-  const p = progress(t, timing.start, preset === "none" ? 0 : durationMs, easing);
+  const { fade, move, durationMs, easing, distance, scaleStart } = m.entrance;
+  if (!fade && move === "none") {
+    // No entrance animation: a cut at the start time.
+    if (t < timing.start) state.opacity = 0;
+    return;
+  }
+  const p = progress(t, timing.start, durationMs, easing);
+  // Opacity never overshoots; movement may (Spring).
+  if (fade) state.opacity *= Math.min(1, Math.max(0, p));
+  else if (t < timing.start) state.opacity = 0;
   const remaining = 1 - p;
-  switch (preset) {
-    case "none":
-      state.opacity *= p; // a cut at the start time
-      return;
-    case "fadeIn":
-      state.opacity *= p;
-      return;
+  switch (move) {
     case "slideUp":
       state.translateY += distance * remaining;
       break;
@@ -166,8 +180,9 @@ function applyEntrance(state: MotionState, m: MotionConfig, timing: LayerTiming,
     case "scaleIn":
       state.scale *= scaleStart + (1 - scaleStart) * p;
       break;
+    case "none":
+      break;
   }
-  state.opacity *= p;
 }
 
 function applyTransition(state: MotionState, m: MotionConfig, timing: LayerTiming, t: number, layer: Layer) {
@@ -175,7 +190,7 @@ function applyTransition(state: MotionState, m: MotionConfig, timing: LayerTimin
   const p = progress(t, timing.start, durationMs, easing);
   switch (preset) {
     case "crossfade":
-      state.opacity *= p;
+      state.opacity *= Math.min(1, Math.max(0, p));
       return;
     case "slide": {
       // The new photo travels in from the opposite edge, moving in `direction`.
@@ -187,18 +202,19 @@ function applyTransition(state: MotionState, m: MotionConfig, timing: LayerTimin
     }
     case "zoom":
       state.contentScale *= 1 + 0.25 * (1 - p);
-      state.opacity *= p;
+      state.opacity *= Math.min(1, Math.max(0, p));
       return;
     case "none":
+      if (p <= 0) state.opacity = 0;
       return;
   }
 }
 
 function applyContinuous(state: MotionState, m: MotionConfig, timing: LayerTiming, t: number, layer: Layer) {
-  const { preset, scaleStart, scaleEnd, distance } = m.continuous;
+  const { preset, scaleStart, scaleEnd, distance, easing } = m.continuous;
   if (preset === "none") return;
   const span = timing.continuousEnd - timing.continuousStart;
-  const q = span <= 0 ? 1 : clamp01((t - timing.continuousStart) / span);
+  const q = span <= 0 ? 1 : ease(easing, (t - timing.continuousStart) / span);
   if (preset === "slowZoomIn" || preset === "slowZoomOut") {
     state.contentScale *= scaleStart + (scaleEnd - scaleStart) * q;
     return;
@@ -218,7 +234,7 @@ function applyExit(state: MotionState, m: MotionConfig, timing: LayerTiming, t: 
   const { preset, easing, distance, direction } = m.exit;
   if (preset === "none" || t < timing.exitStart) return;
   const r = progress(t, timing.exitStart, timing.exitEnd - timing.exitStart, easing);
-  state.opacity *= 1 - r;
+  state.opacity *= Math.min(1, Math.max(0, 1 - r));
   if (preset === "slideOut") {
     const [dx, dy] = directionVector(direction);
     state.translateX += dx * distance * r;
@@ -241,4 +257,74 @@ export function evaluateMotion(layer: Layer, timing: LayerTiming | undefined, t:
 /** Whether a layer type supports the continuous / transition sections. */
 export function supportsContinuous(layer: Layer): boolean {
   return layer.type === "image" || layer.type === "logo";
+}
+
+export interface SceneTimingIssue {
+  layerId: string;
+  message: string;
+}
+
+/** Animation that runs past the end of the scene (it would be cut off). */
+export function timingIssues(layer: Layer, timing: LayerTiming | undefined, sceneDurationMs: number): string[] {
+  if (!timing) return [];
+  const issues: string[] = [];
+  const s = (ms: number) => `${(ms / 1000).toFixed(2)} s`;
+  if (timing.start >= sceneDurationMs)
+    issues.push(`Starts at ${s(timing.start)}, after the scene ends (${s(sceneDurationMs)}).`);
+  else if (timing.entranceEnd > sceneDurationMs)
+    issues.push(`Entrance ends at ${s(timing.entranceEnd)}, after the scene ends.`);
+  if (Number.isFinite(timing.exitEnd) && timing.exitEnd > sceneDurationMs + 1) {
+    issues.push(`Exit ends at ${s(timing.exitEnd)}, after the scene ends.`);
+  }
+  if (layer.motion.continuous.preset !== "none" && timing.continuousEnd > sceneDurationMs + 1) {
+    issues.push(`Camera motion runs to ${s(timing.continuousEnd)}; it will be cut at the scene end.`);
+  }
+  return issues;
+}
+
+/**
+ * Checks whether animated camera motion ever exposes the frame's edges (blank areas).
+ * Samples the continuous motion only — transitions and entrances move on purpose.
+ * Returns the smallest uniform scale that would keep the frame covered, or null if fine.
+ */
+export function cameraCoverage(
+  layer: ImageLayer | LogoLayer,
+  media: Size | null,
+  timing: LayerTiming | undefined,
+): { covered: boolean; minScaleNeeded: number } {
+  const m = layer.motion.continuous;
+  if (!timing || m.preset === "none" || layer.type === "logo") return { covered: true, minScaleNeeded: 1 };
+  const frame = { width: layer.width, height: layer.height };
+  const fit = layer.fit;
+  const rect = fitImageRect(media ?? frame, frame, fit, layer.focalX, layer.focalY, layer.zoom);
+  const cameraOnly: Layer = {
+    ...layer,
+    motion: {
+      ...layer.motion,
+      entrance: { ...layer.motion.entrance, fade: false, move: "none" },
+      transition: { ...layer.motion.transition, preset: "none" },
+      exit: { ...layer.motion.exit, preset: "none" },
+    },
+    role: undefined,
+  };
+  let worst = 1;
+  const steps = 40;
+  for (let i = 0; i <= steps; i++) {
+    const t = timing.continuousStart + ((timing.continuousEnd - timing.continuousStart) * i) / steps;
+    const st = evaluateMotion(cameraOnly, { ...timing, start: 0, entranceEnd: 0 }, t);
+    // Image rect after scaling about the frame center and translating.
+    const cx = frame.width / 2;
+    const cy = frame.height / 2;
+    const left = cx + (rect.x - cx) * st.contentScale + st.contentTranslateX;
+    const top = cy + (rect.y - cy) * st.contentScale + st.contentTranslateY;
+    const right = cx + (rect.x + rect.width - cx) * st.contentScale + st.contentTranslateX;
+    const bottom = cy + (rect.y + rect.height - cy) * st.contentScale + st.contentTranslateY;
+    if (left > 0.5 || top > 0.5 || right < frame.width - 0.5 || bottom < frame.height - 0.5) {
+      // Scale (applied to the whole motion) that would cover this sample.
+      const needX = Math.max((cx - 0) / Math.max(1e-6, cx - left), (frame.width - cx) / Math.max(1e-6, right - cx));
+      const needY = Math.max(cy / Math.max(1e-6, cy - top), (frame.height - cy) / Math.max(1e-6, bottom - cy));
+      worst = Math.max(worst, needX, needY);
+    }
+  }
+  return { covered: worst <= 1.0005, minScaleNeeded: worst };
 }

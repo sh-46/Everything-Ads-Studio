@@ -3,6 +3,7 @@
 import { Eye, PenTool } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
 import { cn } from "cn";
+import { PREVIEW_FPS } from "@/domain/motion-engine";
 import { ScenePlayer } from "@/features/preview/scene-player";
 import { useActiveScene, useEditorStore } from "../store/editor-store";
 
@@ -10,11 +11,16 @@ import { useActiveScene, useEditorStore } from "../store/editor-store";
 export function EditorPreview() {
   const scene = useActiveScene();
   const assets = useEditorStore(useShallow((s) => s.assets));
-  const nonce = useEditorStore((s) => s.previewNonce);
+  const request = useEditorStore((s) => s.previewRequest);
   if (!scene) return null;
   return (
     <div className="h-full p-6" data-testid="editor-preview">
-      <ScenePlayer document={scene.document} assets={assets} restartNonce={nonce} autoPlay />
+      <ScenePlayer
+        document={scene.document}
+        assets={assets}
+        restart={{ nonce: request.nonce, frame: Math.round((request.fromMs / 1000) * PREVIEW_FPS) }}
+        autoPlay
+      />
     </div>
   );
 }

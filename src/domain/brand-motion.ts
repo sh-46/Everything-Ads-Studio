@@ -12,7 +12,8 @@ export function textMotion(kit: BrandKit, sequencing: Sequencing = "sceneStart",
   m.delayMs = delayMs;
   m.entrance = {
     ...m.entrance,
-    preset: kit.motionDefaults.entrancePreset,
+    fade: kit.motionDefaults.entranceFade,
+    move: kit.motionDefaults.entranceMove,
     durationMs: kit.motionDefaults.entranceDurationMs,
     easing: kit.motionDefaults.easing,
   };
@@ -37,4 +38,18 @@ export function continuousDefaults(preset: MotionConfig["continuous"]["preset"])
     default:
       return { preset, scaleStart: 1, distance: 60 };
   }
+}
+
+/** What "Reset to default" restores for each Motion inspector section. */
+export function sectionDefaults(kit: BrandKit, layerType: string) {
+  const base = defaultMotion();
+  const usesKitEntrance = layerType !== "image" && layerType !== "gradient";
+  return {
+    timing: { sequencing: base.sequencing, delayMs: base.delayMs },
+    entrance: usesKitEntrance ? textMotion(kit).entrance : base.entrance,
+    continuous: { ...base.continuous, ...continuousDefaults(kit.motionDefaults.photoMotion) },
+    transition: { ...base.transition, preset: "crossfade" as const },
+    exit: { ...base.exit },
+    holdMs: base.holdMs,
+  };
 }

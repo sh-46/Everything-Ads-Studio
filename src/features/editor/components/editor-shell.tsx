@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { brandFontsFromAssets, type Asset } from "@/domain/asset";
 import { useBrandFonts } from "@/features/fonts/use-brand-fonts";
 import type { BrandKit } from "@/domain/brand-kit";
+import type { MotionPreset } from "@/domain/motion-presets";
 import type { Scene } from "@/domain/scene";
 import { useAutosave } from "../hooks/use-autosave";
 import { useKeyboardShortcuts } from "../hooks/use-keyboard-shortcuts";
@@ -31,6 +32,8 @@ const CanvasStage = dynamic(() => import("./canvas-stage"), {
 
 export interface EditorShellProps {
   workspaceId: string;
+  /** Project-level motion presets. */
+  motionPresets: MotionPreset[];
   /** Scene to open first (from the Scenes Overview). */
   initialSceneId?: string;
   /** Local Demo Mode (decided on the server; never read from client env). */
@@ -106,6 +109,7 @@ export function EditorShell(props: EditorShellProps) {
       kit: props.kit,
       assets: props.assets,
       scenes: props.scenes,
+      motionPresets: props.motionPresets,
       uploadTarget: {
         workspaceId: props.workspaceId,
         brandId: props.brandId,

@@ -12,7 +12,7 @@ export interface ProjectListItem extends ModelProject {
 }
 
 const PROJECT_COLUMNS =
-  "id, workspace_id, brand_id, name, model_year, model_name, status, export_config, revision, last_edited_at, archived_at, created_at, brands(name)";
+  "id, workspace_id, brand_id, name, model_year, model_name, status, export_config, motion_presets, revision, last_edited_at, archived_at, created_at, brands(name)";
 
 interface ProjectRow {
   id: string;
@@ -23,6 +23,7 @@ interface ProjectRow {
   model_name: string;
   status: string;
   export_config: unknown;
+  motion_presets: unknown;
   revision: number;
   last_edited_at: string;
   archived_at: string | null;
@@ -42,6 +43,7 @@ function mapProject(row: ProjectRow): ProjectListItem {
       modelName: row.model_name,
       status: row.status,
       exportConfig: exportConfig.success ? exportConfig.data : exportConfigSchema.parse({}),
+      motionPresets: row.motion_presets ?? [],
       revision: row.revision,
       lastEditedAt: row.last_edited_at,
       archivedAt: row.archived_at,

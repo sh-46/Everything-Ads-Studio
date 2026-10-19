@@ -16,8 +16,8 @@ import {
   CONTINUOUS_PRESETS,
   EASING_LABELS,
   EASINGS,
-  ENTRANCE_LABELS,
-  ENTRANCE_PRESETS,
+  ENTRANCE_MOVES,
+  MOVE_LABELS,
 } from "@/domain/motion";
 import type { UploadTarget } from "@/features/assets/upload";
 import { TYPE_STYLE_REFS, type TypeStyleRef } from "@/domain/scene";
@@ -351,14 +351,24 @@ export function BrandKitForm({
         description="Applied when layers are created. Changing them never alters existing scenes."
       >
         <div className="grid max-w-2xl gap-2 sm:grid-cols-2">
+          <label className="flex items-center gap-2 text-xs">
+            <input
+              type="checkbox"
+              checked={kit.motionDefaults.entranceFade}
+              onChange={(e) => update("motionDefaults", { ...kit.motionDefaults, entranceFade: e.target.checked })}
+            />
+            Text & logos fade in
+          </label>
           <SelectField
-            label="Enter"
-            value={kit.motionDefaults.entrancePreset}
-            options={ENTRANCE_PRESETS.map((p) => ({ value: p, label: ENTRANCE_LABELS[p] }))}
-            onChange={(entrancePreset) => update("motionDefaults", { ...kit.motionDefaults, entrancePreset })}
+            wide
+            label="Movement"
+            value={kit.motionDefaults.entranceMove}
+            options={ENTRANCE_MOVES.map((p) => ({ value: p, label: MOVE_LABELS[p] }))}
+            onChange={(entranceMove) => update("motionDefaults", { ...kit.motionDefaults, entranceMove })}
           />
           <NumberField
-            label="Dur"
+            wide
+            label="Duration"
             suffix="s"
             min={0}
             max={20}
@@ -370,13 +380,15 @@ export function BrandKitForm({
             }
           />
           <SelectField
-            label="Ease"
+            wide
+            label="Easing"
             value={kit.motionDefaults.easing}
             options={EASINGS.map((e) => ({ value: e, label: EASING_LABELS[e] }))}
             onChange={(easing) => update("motionDefaults", { ...kit.motionDefaults, easing })}
           />
           <SelectField
-            label="Photo"
+            wide
+            label="Photo camera"
             value={kit.motionDefaults.photoMotion}
             options={CONTINUOUS_PRESETS.map((p) => ({ value: p, label: CONTINUOUS_LABELS[p] }))}
             onChange={(photoMotion) => update("motionDefaults", { ...kit.motionDefaults, photoMotion })}

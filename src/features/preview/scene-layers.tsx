@@ -45,6 +45,8 @@ export function SceneLayers({
           <div
             key={layer.id}
             data-layer-id={layer.id}
+            data-layer-type={layer.type}
+            data-layer-role={layer.role}
             style={{
               position: "absolute",
               left: layer.x,

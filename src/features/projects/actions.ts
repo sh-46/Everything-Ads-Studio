@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { parseBrandKit } from "@/domain/brand-kit";
 import { defaultExportConfig } from "@/domain/export-config";
+import { motionPresetListSchema, motionPresetSchema, type MotionPreset } from "@/domain/motion-presets";
 import { PROJECT_STATUSES, projectMetaInputSchema, type ProjectMetaInput } from "@/domain/project";
 import { defaultProjectScenes } from "@/domain/scene-templates";
 import { isDemoMode } from "@/lib/demo/mode";
@@ -128,4 +129,38 @@ export async function setProjectArchived(projectId: string, archived: boolean): 
   revalidatePath(`/projects/${projectId}`, "layout");
   revalidatePath("/dashboard");
   return ok();
+}
+
+/** Saves (or replaces, by id) a project motion preset. Returns the updated list. */
+export async function saveMotionPreset(projectId: string, preset: MotionPreset): Promise<Result<MotionPreset[]>> {
+  const parsed = motionPresetSchema.safeParse(preset);
+  if (!parsed.success) return fail(`Invalid preset: ${parsed.error.issues[0].message}`);
+  if (parsed.data.id.startsWith("starter:")) return fail("Starter presets can't be overwritten.");
+  if (isDemoMode()) {
+    const list = demo.demoSaveMotionPreset(projectId, parsed.data);
+    return list ? ok(list) : fail("Project not found.");
+  }
+  const ctx = await requireSession();
+  const { data, error } = await ctx.supabase.rpc("save_motion_preset", {
+    p_project_id: projectId,
+    p_preset: parsed.data,
+  });
+  if (error) return fail(`Could not save preset: ${error.message}`);
+  if (data === null) return fail("Project not found or not editable.");
+  return ok(motionPresetListSchema.parse(data));
+}
+
+export async function deleteMotionPreset(projectId: string, presetId: string): Promise<Result<MotionPreset[]>> {
+  if (isDemoMode()) {
+    const list = demo.demoDeleteMotionPreset(projectId, presetId);
+    return list ? ok(list) : fail("Project not found.");
+  }
+  const ctx = await requireSession();
+  const { data, error } = await ctx.supabase.rpc("delete_motion_preset", {
+    p_project_id: projectId,
+    p_preset_id: presetId,
+  });
+  if (error) return fail(`Could not delete preset: ${error.message}`);
+  if (data === null) return fail("Project not found or not editable.");
+  return ok(motionPresetListSchema.parse(data));
 }

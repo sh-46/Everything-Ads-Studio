@@ -173,6 +173,27 @@ check(
   (await db.query(`select * from public.asset_usage($1)`, [fontId])).rows.length === 1,
 );
 
+// --- 0003: motion presets
+await one(`select public.save_motion_preset($1, '{"id":"p1","name":"Headline","motion":{}}'::jsonb)`, [projA]);
+await one(`select public.save_motion_preset($1, '{"id":"p2","name":"Logo","motion":{}}'::jsonb)`, [projA]);
+await one(`select public.save_motion_preset($1, '{"id":"p1","name":"Headline v2","motion":{}}'::jsonb)`, [projA]);
+let presets = (await one(`select motion_presets from model_projects where id = $1`, [projA])).motion_presets;
+check(
+  "save_motion_preset upserts by id",
+  presets.length === 2 && presets.some((p) => p.name === "Headline v2"),
+  JSON.stringify(presets),
+);
+await one(`select public.delete_motion_preset($1, 'p2')`, [projA]);
+presets = (await one(`select motion_presets from model_projects where id = $1`, [projA])).motion_presets;
+check("delete_motion_preset removes one preset", presets.length === 1 && presets[0].id === "p1");
+
+const dupWithPresets = (await one(`select public.duplicate_model_project($1, 'MDX presets copy') as id`, [projA])).id;
+check(
+  "duplicating a project keeps its motion presets",
+  (await one(`select jsonb_array_length(motion_presets) as n from model_projects where id = $1`, [dupWithPresets]))
+    .n === 1,
+);
+
 // --- User B
 await as(B);
 const wsB = (await one(`select workspace_id from workspace_members`)).workspace_id;
@@ -188,6 +209,11 @@ check(
   "B cannot see usage of A's assets",
   (await db.query(`select * from public.asset_usage($1)`, [logoId])).rows.length === 0,
 );
+const bPreset = await db.query(
+  `select public.save_motion_preset($1, '{"id":"x","name":"x","motion":{}}'::jsonb) as r`,
+  [projA],
+);
+check("B cannot save presets into A's project", bPreset.rows[0].r === null);
 check("B cannot see A's storage objects", (await one(`select count(*)::int as n from storage.objects`)).n === 0);
 check(
   "B cannot see A's workspace",

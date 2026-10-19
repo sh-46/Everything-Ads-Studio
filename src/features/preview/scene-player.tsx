@@ -51,6 +51,7 @@ export function ScenePlayer({
   loop = true,
   controls = true,
   restartNonce,
+  restart,
   playing,
   className,
   ...source
@@ -61,6 +62,8 @@ export function ScenePlayer({
   controls?: boolean;
   /** Changing this restarts playback from frame 0. */
   restartNonce?: number;
+  /** Restart from a given frame whenever `nonce` changes (e.g. replay one layer). */
+  restart?: { nonce: number; frame: number };
   /** Controlled play state (e.g. play only the scene in view). */
   playing?: boolean;
   className?: string;
@@ -105,6 +108,16 @@ export function ScenePlayer({
     playerRef.current.play();
   }, [restartNonce]);
 
+  // Applied once the player exists (it mounts after the first measurement).
+  const appliedRestart = useRef<number | null>(null);
+  useEffect(() => {
+    const player = playerRef.current;
+    if (!restart || !player || appliedRestart.current === restart.nonce) return;
+    appliedRestart.current = restart.nonce;
+    player.seekTo(Math.min(restart.frame, durationInFrames - 1));
+    player.play();
+  }, [restart, size.width, durationInFrames]);
+
   // Controlled playback (e.g. the scene scrolled into view). Initial play goes through
   // `autoPlay`; later changes restart or pause the already-mounted player.
   const mountedPlaying = useRef(playing);
@@ -140,6 +153,7 @@ export function ScenePlayer({
           // No audio in these compositions. Muted players don't wait for an AudioContext
           // (which Chrome blocks until a click), so in-view autoplay works on page load.
           initiallyMuted
+          initialFrame={restart ? Math.min(restart.frame, durationInFrames - 1) : 0}
         />
       ) : (
         <Player
@@ -156,6 +170,7 @@ export function ScenePlayer({
           // No audio in these compositions. Muted players don't wait for an AudioContext
           // (which Chrome blocks until a click), so in-view autoplay works on page load.
           initiallyMuted
+          initialFrame={restart ? Math.min(restart.frame, durationInFrames - 1) : 0}
         />
       )
     ) : null;

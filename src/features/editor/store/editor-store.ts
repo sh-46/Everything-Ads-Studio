@@ -3,6 +3,9 @@
 import { create } from "zustand";
 import type { Asset } from "@/domain/asset";
 import type { UploadTarget } from "@/features/assets/upload";
+import { computeSceneTimings } from "@/domain/motion-engine";
+import type { MotionPreset } from "@/domain/motion-presets";
+import type { MotionConfig } from "@/domain/motion";
 import type { BrandKit } from "@/domain/brand-kit";
 import { applyLayoutPreset, type LayoutPresetId } from "@/domain/layout-presets";
 import type { Layer, Scene, SceneDocument } from "@/domain/scene";
@@ -42,8 +45,10 @@ interface EditorState {
   canvasMode: CanvasMode;
   /** Where uploads from the editor go (project photos, brand logos). */
   uploadTarget: UploadTarget | null;
-  /** Bumped to ask the preview player to restart (e.g. from the Motion inspector). */
-  previewNonce: number;
+  /** Ask the preview player to (re)start playback from `fromMs` (bumping `nonce`). */
+  previewRequest: { nonce: number; fromMs: number };
+  /** Project-level motion presets. */
+  motionPresets: MotionPreset[];
   /** Brand font load state by family, and a counter that changes as fonts finish loading. */
   fontStatus: Record<string, "loading" | "loaded" | "error">;
   fontsVersion: number;
@@ -55,6 +60,7 @@ interface EditorState {
     assets: Asset[];
     scenes: Scene[];
     uploadTarget: UploadTarget;
+    motionPresets?: MotionPreset[];
   }): void;
   setActiveScene(sceneId: string): void;
   selectLayer(layerId: string | null): void;
@@ -87,7 +93,13 @@ interface EditorState {
   /** Insert a scene created on the server (e.g. a duplicate) after its source. */
   insertScene(scene: Scene, afterSceneId: string): void;
   setCanvasMode(mode: CanvasMode): void;
-  playPreview(): void;
+  /** Switch to preview and play from `fromMs` (default: scene start). */
+  playPreview(fromMs?: number): void;
+  /** Switch to preview and replay the given layer's animation from just before it starts. */
+  playLayer(layerId: string): void;
+  setMotionPresets(presets: MotionPreset[]): void;
+  /** Copy motion onto every layer with `role` across all scenes (one undo step per scene). */
+  applyMotionToRole(role: string, motion: (layer: { motion: MotionConfig; type: string }) => MotionConfig): number;
   setFontState(status: Record<string, "loading" | "loaded" | "error">, version: number): void;
 
   markSaving(sceneId: string, saving: boolean): void;
@@ -119,11 +131,12 @@ export const useEditorStore = create<EditorState>()((set, get) => ({
   lastSavedAt: null,
   canvasMode: "edit",
   uploadTarget: null,
-  previewNonce: 0,
+  previewRequest: { nonce: 0, fromMs: 0 },
+  motionPresets: [],
   fontStatus: {},
   fontsVersion: 0,
 
-  init({ projectId, brandId, kit, assets, scenes, uploadTarget }) {
+  init({ projectId, brandId, kit, assets, scenes, uploadTarget, motionPresets = [] }) {
     const ordered = [...scenes].sort((a, b) => a.position - b.position);
     set({
       projectId,
@@ -141,6 +154,7 @@ export const useEditorStore = create<EditorState>()((set, get) => ({
       lastSavedAt: null,
       canvasMode: "edit",
       uploadTarget,
+      motionPresets,
     });
   },
 
@@ -277,8 +291,40 @@ export const useEditorStore = create<EditorState>()((set, get) => ({
     set({ canvasMode: mode });
   },
 
-  playPreview() {
-    set((state) => ({ canvasMode: "preview", previewNonce: state.previewNonce + 1 }));
+  playPreview(fromMs = 0) {
+    set((state) => ({ canvasMode: "preview", previewRequest: { nonce: state.previewRequest.nonce + 1, fromMs } }));
+  },
+
+  playLayer(layerId) {
+    const scene = get().scenes[get().activeSceneId];
+    if (!scene) return;
+    const timing = computeSceneTimings(scene.document.layers, scene.document.durationMs).get(layerId);
+    // Start a moment early so the change is visible from rest.
+    get().playPreview(Math.max(0, (timing?.start ?? 0) - 250));
+  },
+
+  setMotionPresets(motionPresets) {
+    set({ motionPresets });
+  },
+
+  applyMotionToRole(role, motion) {
+    let count = 0;
+    for (const sceneId of get().sceneOrder) {
+      const scene = get().scenes[sceneId];
+      if (!scene?.document.layers.some((l) => l.role === role)) continue;
+      get().mutateScene(sceneId, (s) => ({
+        ...s,
+        document: {
+          ...s.document,
+          layers: s.document.layers.map((l) => {
+            if (l.role !== role) return l;
+            count += 1;
+            return { ...l, motion: motion(l) };
+          }),
+        },
+      }));
+    }
+    return count;
   },
 
   setFontState(fontStatus, fontsVersion) {
