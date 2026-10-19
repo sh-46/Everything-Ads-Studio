@@ -2,7 +2,7 @@ import { createReadStream, promises as fs } from "node:fs";
 import { Readable } from "node:stream";
 import { NextResponse, type NextRequest } from "next/server";
 import { getJob, itemPath, zipPath } from "@/server/export/jobs";
-import { requireSession } from "@/lib/supabase/server";
+import { getSession } from "@/lib/supabase/server";
 
 const TYPES: Record<string, string> = { mp4: "video/mp4", png: "image/png", zip: "application/zip" };
 
@@ -12,7 +12,8 @@ const TYPES: Record<string, string> = { mp4: "video/mp4", png: "image/png", zip:
  */
 export async function GET(request: NextRequest, { params }: RouteContext<"/api/exports/[jobId]/download">) {
   const { jobId } = await params;
-  const ctx = await requireSession();
+  const ctx = await getSession();
+  if (!ctx) return NextResponse.json({ error: "Your session expired. Sign in again to export." }, { status: 401 });
   const job = getJob(jobId);
   if (!job || job.ownerId !== ctx.userId) return NextResponse.json({ error: "Export not found." }, { status: 404 });
 

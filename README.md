@@ -10,37 +10,72 @@ Architecture, schema, roadmap and risks: [docs/ARCHITECTURE.md](docs/ARCHITECTUR
 Milestone 1 (vertical slice) plus **Phase 2.5 (photo workflow, Brand Kit fonts & logos)** and
 **Phase 3 (motion engine & preview)** and **Phase 4 (local production export & Facebook Experience Preview)**.
 
-| Area                                                                                                                                                                                            | State                  |
-| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------- |
-| Auth, workspace, dashboard, brands, Brand Kit, project CRUD                                                                                                                                     | Built                  |
-| Scene editor: text / image / gradient / shape / logo layers, drag, resize, rotate, inspector, undo/redo, shortcuts, layout presets                                                              | Built                  |
-| Autosave with Saving / Saved / Error, retry, revision conflict resolution                                                                                                                       | Built                  |
-| Photo workflow: batch upload, project photo library, Add Image (upload / library / empty frame), canvas drag-and-drop, Replace / Remove keeping layout & motion, safe delete with usage warning | Built                  |
-| Scenes Overview: photo slots per scene (1–2 photos; CTA optional), assign / replace / remove before opening the editor                                                                          | Built                  |
-| Brand Kit fonts (TTF/OTF/WOFF/WOFF2, FontFace loading, metadata detection + correction) and Logo Library (SVG/PNG/WebP, variants)                                                               | Built                  |
-| Motion: entrance, continuous image motion, exit, two-image transitions, sequencing, timing — Motion inspector                                                                                   | Built                  |
-| Scene Preview (Remotion Player: play, pause, restart, scrub) and Facebook mobile preview (feed → Learn More → Build, Outro + CTA)                                                               | Built                  |
-| Scene duplication                                                                                                                                                                               | Built                  |
-| Multi-select, snapping, workspace invites                                                                                                                                                       | Not started            |
-| Export: Creative Package ZIP (Motion Tile + Facebook Build), single-scene MP4/PNG, job progress, retry, render cache                                                                            | Built (local renderer) |
-| Photo disclosures (per-photo wording, static disclosure layers, two-photo hand-over, quality checks, pre-export review); visibility timing; Static / No Motion; per-scene durations             | Built                  |
-| Copy Assistant                                                                                                                                                                                  | Phase 5                |
+| Area                                                                                                                                                                                            | State                                                             |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| Auth, workspace, dashboard, brands, Brand Kit, project CRUD                                                                                                                                     | Built                                                             |
+| Scene editor: text / image / gradient / shape / logo layers, drag, resize, rotate, inspector, undo/redo, shortcuts, layout presets                                                              | Built                                                             |
+| Autosave with Saving / Saved / Error, retry, revision conflict resolution                                                                                                                       | Built                                                             |
+| Photo workflow: batch upload, project photo library, Add Image (upload / library / empty frame), canvas drag-and-drop, Replace / Remove keeping layout & motion, safe delete with usage warning | Built                                                             |
+| Scenes Overview: photo slots per scene (1–2 photos; CTA optional), assign / replace / remove before opening the editor                                                                          | Built                                                             |
+| Brand Kit fonts (TTF/OTF/WOFF/WOFF2, FontFace loading, metadata detection + correction) and Logo Library (SVG/PNG/WebP, variants)                                                               | Built                                                             |
+| Motion: entrance, continuous image motion, exit, two-image transitions, sequencing, timing — Motion inspector                                                                                   | Built                                                             |
+| Scene Preview (Remotion Player: play, pause, restart, scrub) and Facebook mobile preview (feed → Learn More → Build, Outro + CTA)                                                               | Built                                                             |
+| Scene duplication                                                                                                                                                                               | Built                                                             |
+| Multi-select, snapping, workspace invites                                                                                                                                                       | Not started                                                       |
+| Export: Creative Package ZIP (Motion Tile + Facebook Build), single-scene MP4/PNG, job progress, retry, render cache                                                                            | Built (local renderer)                                            |
+| Photo disclosures (per-photo wording, static disclosure layers, two-photo hand-over, quality checks, pre-export review); visibility timing; Static / No Motion; per-scene durations             | Built                                                             |
+| Supabase persistence (Phase 5): auth, RLS, private Storage with authorized `/api/assets` links, autosave hardening, editor preferences, setup bundle                                            | Built — live project needs `supabase/setup/apply-all.sql` applied |
+| Copy Assistant                                                                                                                                                                                  | Phase 5                                                           |
 
-## Setup
+## Setup (Supabase — persistent mode)
 
 Requirements: Node 20.9+ and a Supabase project.
 
 1. `npm install`
-2. Apply the database migrations in order: open the Supabase SQL editor and run
-   `supabase/migrations/0001_init.sql`, `0002_brand_assets.sql`, then `0003_motion_presets.sql` (or
-   `supabase db push` with the Supabase CLI). 0001 creates tables, RLS policies, RPCs and the private `assets`
-   bucket; 0002 adds logo/font metadata and the `asset_usage` check; 0003 adds project motion presets. Each
-   file starts with a security summary.
-3. `cp .env.example .env.local` and fill in `NEXT_PUBLIC_SUPABASE_URL` and
-   `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` (Project Settings → API). Never add the service-role key.
-4. Optional: in Supabase Auth settings, disable "Confirm email" for faster local testing, or set the
-   Site URL to `http://localhost:3000` so the confirmation link (`/auth/confirm`) works.
-5. `npm run dev` → http://localhost:3000
+2. **Database (once per Supabase project).** Dashboard → SQL Editor → paste the whole of
+   `supabase/setup/apply-all.sql` → Run. It applies migrations 0001–0004 in one transaction: tables, RLS
+   policies, RPCs, the private `assets` Storage bucket and its policies. It is additive and refuses to run if
+   the schema already exists. Check with `select * from public.schema_versions;` (four rows).
+   For an existing database, run only the missing files from `supabase/migrations/` in order.
+   (`npm run db:bundle` regenerates the file after adding a migration; `npm run test:db` checks both.)
+3. `.env.local` (gitignored) with `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`
+   (Project Settings → API). Only the publishable key is used; never add the service-role key.
+4. Auth: Dashboard → Authentication → URL Configuration → Site URL `http://localhost:3001` (and add it to
+   Redirect URLs) so confirmation links open this app. For quick local testing you can turn off
+   Authentication → Sign In / Providers → Email → "Confirm email".
+5. `npm run dev -- -p 3001` → http://localhost:3001 → sign up / sign in.
+
+### What is stored where
+
+| Data                                                                                                                                                                               | Where                                                                                                                                                                                       |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Brands, Brand Kits (colours, typography, motion defaults)                                                                                                                          | `brands`, `brand_kits.kit` (JSONB)                                                                                                                                                          |
+| Projects, motion presets                                                                                                                                                           | `model_projects` (`motion_presets` JSONB)                                                                                                                                                   |
+| Scenes: size, duration, layers + order, text & styling, photo assignments, motion (timing, easing, Static), focus points, camera, transitions, visibility timing, disclosure links | `scenes.document` (JSONB, validated by `src/domain/scene.ts`) with a `revision` for safe concurrent saves                                                                                   |
+| Photos, logos, fonts                                                                                                                                                               | Storage bucket `assets` (private) + `assets` rows: original filename, size, dimensions, font/logo metadata, **photo disclosure** (`metadata.requiresDisclosure`, `metadata.disclosureText`) |
+| Editor preferences (zoom, last scene per project)                                                                                                                                  | `profiles.preferences`                                                                                                                                                                      |
+
+### Security model
+
+- Every table has RLS. Rows belong to a workspace; signing up creates a personal workspace with you as owner,
+  so your brands, projects, scenes and files are visible only to you. All functions run as the caller
+  (SECURITY INVOKER) except two membership helpers.
+- Storage: files live at `{workspace}/{brand}/{project | brand-kit}/{uuid}.{ext}` (no name collisions; the
+  original filename is kept in the database). Storage policies allow read/upload/delete only inside your
+  workspace folder. The browser uploads directly with your session; the server re-checks the path and file
+  contents before registering it.
+- The app never hands out long-lived links: images and fonts load from `/api/assets/{id}`, which checks your
+  session and RLS and redirects to a 10-minute signed URL. Exports get signed URLs on the server for the
+  render browser. Signed-out API calls get `401`; signed-out pages redirect to `/login`.
+
+### Saving
+
+Edits autosave about 0.8 s after you stop (every scene, every change). The top bar shows Saving / Saved /
+Unsaved / Error and only says Saved after the database confirms. Each save is compare-and-swap on the scene's
+`revision`, so a stale tab can't overwrite newer work — you choose which version to keep. Failed saves keep
+your edits, retry with backoff (2 s → 30 s), retry immediately when the network returns, and flush when the
+tab is hidden. If your session expires, saving reports it instead of navigating away; sign in again in
+another tab and it resumes. Undo/redo stays available for the session.
 
 ## Local Demo Mode (no Supabase)
 

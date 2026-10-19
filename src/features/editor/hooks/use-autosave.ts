@@ -6,7 +6,9 @@ import { saveScene } from "../actions";
 import { isSceneDirty, useEditorStore } from "../store/editor-store";
 
 const DEBOUNCE_MS = 800;
-const RETRY_MS = 5000;
+/** Failed saves retry with backoff: 2 s, 4 s, 8 s … capped at 30 s (and at once when back online). */
+const RETRY_BASE_MS = 2000;
+const RETRY_MAX_MS = 30_000;
 
 export type SaveStatus = "saved" | "unsaved" | "saving" | "error" | "conflict";
 
@@ -57,6 +59,7 @@ export function useAutosave() {
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const running = useRef(false);
   const rerun = useRef(false);
+  const failures = useRef(0);
 
   useEffect(() => {
     const schedule = (delay: number) => {
@@ -72,10 +75,28 @@ export function useAutosave() {
       running.current = true;
       const hadError = await flushDirtyScenes();
       running.current = false;
-      if (hadError) schedule(RETRY_MS);
-      else if (rerun.current) schedule(0);
+      if (hadError) {
+        failures.current += 1;
+        schedule(Math.min(RETRY_MAX_MS, RETRY_BASE_MS * 2 ** (failures.current - 1)));
+      } else {
+        failures.current = 0;
+        if (rerun.current) schedule(0);
+      }
       rerun.current = false;
     };
+
+    const hasPending = () => Object.values(useEditorStore.getState().scenes).some(isSceneDirty);
+    // Network back: retry now instead of waiting for the backoff.
+    const onOnline = () => {
+      failures.current = 0;
+      if (hasPending()) schedule(0);
+    };
+    // Tab hidden (switching apps, closing the laptop): save what's pending right away.
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden" && hasPending()) schedule(0);
+    };
+    window.addEventListener("online", onOnline);
+    document.addEventListener("visibilitychange", onVisibility);
 
     const unsubscribe = useEditorStore.subscribe((state, prev) => {
       if (state.scenes !== prev.scenes) schedule(DEBOUNCE_MS);
@@ -92,6 +113,8 @@ export function useAutosave() {
     return () => {
       unsubscribe();
       window.removeEventListener("beforeunload", onBeforeUnload);
+      window.removeEventListener("online", onOnline);
+      document.removeEventListener("visibilitychange", onVisibility);
       if (timer.current) clearTimeout(timer.current);
       // Leaving the editor via in-app navigation: save what's pending right away.
       // The store outlives this component, so the flush can finish in the background.

@@ -257,9 +257,32 @@ check(
 const viewerUpd = await db.query(`update brands set name = 'hacked' where id = $1 returning id`, [brandA]);
 check("viewer cannot write", viewerUpd.rows.length === 0);
 
+// --- Preferences (0004): own profile only
+await as(A);
+await db.query(`update profiles set preferences = '{"zoom":"fit"}'::jsonb where id = $1`, [A]);
+check("A can save own preferences", (await one(`select preferences->>'zoom' as z from profiles`)).z === "fit");
+await as(B);
+const prefUpd = await db.query(`update profiles set preferences = '{"x":1}'::jsonb where id = $1 returning id`, [A]);
+check("B cannot change A's preferences", prefUpd.rows.length === 0);
+check("B cannot read A's profile", (await one(`select count(*)::int as n from profiles where id = $1`, [A])).n === 0);
+check(
+  "preferences must be an object",
+  (await fails(`update profiles set preferences = '[1]'::jsonb where id = $1`, [B])) !== null,
+);
+
 // --- Anonymous
 await db.exec(`reset role; set role anon;`);
 check("anon has no table access", (await fails(`select * from brands`)) !== null);
+check("anon can read applied schema versions", (await one(`select count(*)::int as n from schema_versions`)).n === 4);
+check(
+  "anon cannot write schema versions",
+  (await fails(`insert into schema_versions (version) values ('x')`)) !== null,
+);
+await as(A);
+check(
+  "users cannot write schema versions",
+  (await fails(`insert into schema_versions (version) values ('x')`)) !== null,
+);
 
 console.log(failures === 0 ? "\nAll checks passed" : `\n${failures} check(s) failed`);
 process.exit(failures === 0 ? 0 : 1);

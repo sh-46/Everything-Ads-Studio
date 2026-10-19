@@ -36,6 +36,13 @@ export async function updateSession(request: NextRequest) {
   const isPublic = PUBLIC_PATHS.some((p) => path === p || path.startsWith(`${p}/`));
 
   if (!signedIn && !isPublic) {
+    // Server actions (e.g. autosave) answer for themselves: a redirect here would make the
+    // client navigate away from unsaved edits. They report "session expired" instead.
+    if (request.method === "POST" && request.headers.has("next-action")) return response;
+    // API callers (export polling, asset links) get a status, not an HTML page.
+    if (path.startsWith("/api/")) {
+      return NextResponse.json({ error: "Your session expired. Sign in again." }, { status: 401 });
+    }
     const target = request.nextUrl.clone();
     target.pathname = "/login";
     target.search = path === "/" ? "" : `?next=${encodeURIComponent(path + request.nextUrl.search)}`;

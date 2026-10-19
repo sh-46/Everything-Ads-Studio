@@ -21,7 +21,7 @@ import {
   demoListScenes,
   demoSaveScene,
 } from "@/lib/demo/store";
-import { requireSession } from "@/lib/supabase/server";
+import { getSession, requireSession } from "@/lib/supabase/server";
 
 const saveSceneInputSchema = z.object({
   sceneId: z.uuid(),
@@ -52,7 +52,11 @@ export async function saveScene(input: SaveSceneInput): Promise<SaveSceneResult>
     return demoSaveScene(parsed.data) ?? { status: "error", error: "Scene not found." };
   }
 
-  const ctx = await requireSession();
+  // No redirect on a lapsed session: the editor keeps the edits and retries after sign-in.
+  const ctx = await getSession();
+  if (!ctx) {
+    return { status: "error", error: "Your session expired — sign in again in another tab; edits are kept here" };
+  }
   const { data, error } = await ctx.supabase
     .from("scenes")
     .update({ name, document, revision: expectedRevision + 1 })

@@ -2,7 +2,7 @@
 
 import { ArrowDownToLine, ArrowUpToLine, Copy, Trash2 } from "lucide-react";
 import dynamic from "next/dynamic";
-import { useEffect, useLayoutEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { cn } from "cn";
 import { Button } from "@/components/ui/button";
 import { brandFontsFromAssets, type Asset } from "@/domain/asset";
@@ -10,6 +10,7 @@ import { useBrandFonts } from "@/features/fonts/use-brand-fonts";
 import type { BrandKit } from "@/domain/brand-kit";
 import type { MotionPreset } from "@/domain/motion-presets";
 import type { Scene } from "@/domain/scene";
+import { saveEditorPreferences } from "@/features/preferences/actions";
 import { useAutosave } from "../hooks/use-autosave";
 import { useKeyboardShortcuts } from "../hooks/use-keyboard-shortcuts";
 import { useEditorStore, useSelectedLayer } from "../store/editor-store";
@@ -35,8 +36,10 @@ export interface EditorShellProps {
   workspaceId: string;
   /** Project-level motion presets. */
   motionPresets: MotionPreset[];
-  /** Scene to open first (from the Scenes Overview). */
+  /** Scene to open first (from the Scenes Overview, or where the user left off). */
   initialSceneId?: string;
+  /** Saved canvas zoom preference. */
+  initialZoom?: "fit" | number;
   /** Local Demo Mode (decided on the server; never read from client env). */
   demoMode: boolean;
   projectId: string;
@@ -119,11 +122,13 @@ export function EditorShell(props: EditorShellProps) {
       },
     });
     if (props.initialSceneId) useEditorStore.getState().setActiveScene(props.initialSceneId);
+    if (props.initialZoom !== undefined) useEditorStore.getState().setZoom(props.initialZoom);
     // Server props are only the initial state; later changes live in the store.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.projectId]);
 
   useAutosave();
+  useSavePreferences(props.projectId);
   useKeyboardShortcuts();
   useEditorFonts();
   const canvasMode = useEditorStore((s) => s.canvasMode);
@@ -199,4 +204,23 @@ function useEditorFonts() {
   const fonts = useMemo(() => brandFontsFromAssets(assets), [assets]);
   const { status, version } = useBrandFonts(fonts);
   useEffect(() => setFontState(status, version), [status, version, setFontState]);
+}
+
+/** Remembers the open scene and zoom per user (debounced; best effort — never blocks editing). */
+function useSavePreferences(projectId: string) {
+  const activeSceneId = useEditorStore((s) => s.activeSceneId);
+  const zoom = useEditorStore((s) => s.zoom);
+  const first = useRef(true);
+  useEffect(() => {
+    if (first.current) {
+      first.current = false;
+      return;
+    }
+    if (!activeSceneId) return;
+    const timer = setTimeout(
+      () => void saveEditorPreferences({ zoom, lastSceneByProject: { [projectId]: activeSceneId } }).catch(() => {}),
+      1000,
+    );
+    return () => clearTimeout(timer);
+  }, [activeSceneId, zoom, projectId]);
 }

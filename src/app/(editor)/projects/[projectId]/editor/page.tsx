@@ -5,6 +5,7 @@ import { referencedAssetIds } from "@/domain/scene-photos";
 import { listBrandKitAssets, listProjectPhotos } from "@/features/assets/queries";
 import { getBrand } from "@/features/brands/queries";
 import { EditorShell } from "@/features/editor/components/editor-shell";
+import { getEditorPreferences } from "@/features/preferences/queries";
 import { getProject, listScenes } from "@/features/projects/queries";
 import { isDemoMode } from "@/lib/demo/mode";
 import { requireSession } from "@/lib/supabase/server";
@@ -21,10 +22,11 @@ async function EditorPageContent({ params, searchParams }: PageProps<"/projects/
   const project = await getProject(ctx, projectId);
   if (!project) notFound();
 
-  const [brand, scenes, kitAssets] = await Promise.all([
+  const [brand, scenes, kitAssets, preferences] = await Promise.all([
     getBrand(ctx, project.brandId),
     listScenes(ctx, projectId),
     listBrandKitAssets(ctx, project.brandId),
+    getEditorPreferences(ctx),
   ]);
   // Project photos, plus same-brand photos its scenes reference (e.g. after duplication).
   const photos = await listProjectPhotos(ctx, projectId, [...referencedAssetIds(scenes.map((s) => s.document))]);
@@ -42,7 +44,11 @@ async function EditorPageContent({ params, searchParams }: PageProps<"/projects/
       kit={brand.kit}
       motionPresets={project.motionPresets}
       scenes={scenes}
-      initialSceneId={typeof requestedScene === "string" ? requestedScene : undefined}
+      // A scene link wins; otherwise reopen where this user left off.
+      initialSceneId={
+        typeof requestedScene === "string" ? requestedScene : preferences.lastSceneByProject?.[project.id]
+      }
+      initialZoom={preferences.zoom}
       assets={assets}
     />
   );

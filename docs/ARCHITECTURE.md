@@ -3,7 +3,7 @@
 Status: Milestone 1, Phase 2.5 (photo workflow, brand fonts/logos) and Phase 3 (motion
 engine, Remotion preview) and Phase 4 (local production export, Facebook Experience Preview) are
 implemented, plus the Phase 4 final addendum (photo disclosures, Static / No Motion, visibility timing,
-per-scene durations, export benchmarking). Supabase integration testing / Phase 5 are next.
+per-scene durations, export benchmarking). Phase 5 (Supabase persistence: setup bundle, migration 0004, authorized asset links, autosave hardening) is implemented; see README → Setup.
 
 ## 1. Architecture proposal
 

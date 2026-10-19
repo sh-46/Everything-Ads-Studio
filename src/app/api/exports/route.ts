@@ -2,10 +2,10 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { buildExportPlan, singleExportItem } from "@/domain/export-plan";
 import { referencedAssetIds } from "@/domain/scene-photos";
-import { listBrandKitAssets, listProjectPhotos } from "@/features/assets/queries";
+import { listBrandKitAssets, listProjectPhotos, signAssetsForRender } from "@/features/assets/queries";
 import { getProject, listScenes } from "@/features/projects/queries";
 import { createJob, publicJob } from "@/server/export/jobs";
-import { requireSession } from "@/lib/supabase/server";
+import { getSession } from "@/lib/supabase/server";
 
 const bodySchema = z.object({
   projectId: z.uuid(),
@@ -19,7 +19,8 @@ export async function POST(request: NextRequest) {
   if (!parsed.success) return NextResponse.json({ error: "Invalid export request." }, { status: 400 });
   const { projectId, sceneId } = parsed.data;
 
-  const ctx = await requireSession();
+  const ctx = await getSession();
+  if (!ctx) return NextResponse.json({ error: "Your session expired. Sign in again to export." }, { status: 401 });
   const project = await getProject(ctx, projectId);
   if (!project) return NextResponse.json({ error: "Project not found." }, { status: 404 });
   const scenes = await listScenes(ctx, projectId);
@@ -50,7 +51,8 @@ export async function POST(request: NextRequest) {
     zipName,
     items,
     scenes,
-    assets: [...photos, ...kitAssets],
+    // The render browser has no session: give it signed Storage URLs (demo: unchanged).
+    assets: await signAssetsForRender(ctx, [...photos, ...kitAssets]),
     // The render browser fetches project files from this same server.
     origin: request.nextUrl.origin,
   });

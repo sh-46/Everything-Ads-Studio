@@ -12,6 +12,17 @@ export interface UploadItem {
   error?: string;
 }
 
+const UPLOAD_ATTEMPTS = 3;
+
+/** Network/storage hiccups are worth retrying; rejected files and permission errors aren't. */
+function isTransient(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  if (/not allowed|permission|policy|row-level|belong|unsupported|too large|invalid|exceeded|mime/i.test(message)) {
+    return false;
+  }
+  return /fetch|network|timeout|timed out|5\d\d|gateway|unavailable|connection|ECONN|aborted/i.test(message);
+}
+
 type Extra = (file: File) => { displayName?: string | null; metadata?: AssetMetadata };
 
 /**
@@ -61,11 +72,23 @@ export function useUploader(target: UploadTarget) {
       const uploaded: (Asset | null)[] = files.map(() => null);
       await Promise.all(
         valid.map(async ({ p, index }: { p: PreparedFile; index: number }) => {
-          try {
-            uploaded[index] = await uploadAsset(kind, p, target, withMeta?.(p.file));
-            done(index);
-          } catch (error) {
-            fail(index, error);
+          // Transient failures (network, storage hiccups) retry with backoff; the file was
+          // already validated and its disclosure answered, so nothing is asked again.
+          for (let attempt = 1; ; attempt++) {
+            try {
+              uploaded[index] = await uploadAsset(kind, p, target, withMeta?.(p.file));
+              done(index);
+              return;
+            } catch (error) {
+              if (attempt >= UPLOAD_ATTEMPTS || !isTransient(error)) {
+                fail(index, error);
+                return;
+              }
+              setItems((list) =>
+                list.map((u) => (u.id === ids[index] ? { ...u, name: `${p.file.name} (retrying)` } : u)),
+              );
+              await new Promise((r) => setTimeout(r, 1000 * 2 ** (attempt - 1)));
+            }
           }
         }),
       );

@@ -13,7 +13,8 @@
     "test:watch": "vitest",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "test:db": "node supabase/tests/migration-check.mjs"
+    "test:db": "node supabase/tests/migration-check.mjs && node supabase/tests/bundle-check.mjs",
+    "db:bundle": "node scripts/bundle-migrations.mjs"
   },
   "dependencies": {
     "@remotion/bundler": "4.0.536",

@@ -38,6 +38,41 @@ export interface SessionContext {
 }
 
 /**
+ * The signed-in user and their workspace, or null when signed out. For API routes and
+ * actions that must answer (e.g. "session expired") instead of redirecting — a redirect
+ * from an autosave would navigate away from unsaved edits.
+ */
+export const getSession = cache(async (): Promise<SessionContext | null> => {
+  if (isDemoMode()) return requireSession();
+  const supabase = await createClient();
+  const { data, error } = await supabase.auth.getClaims();
+  if (error || !data?.claims?.sub) return null;
+  return sessionFor(supabase, data.claims.sub, data.claims.email);
+});
+
+async function sessionFor(
+  supabase: SessionContext["supabase"],
+  userId: string,
+  email: unknown,
+): Promise<SessionContext> {
+  const { data: membership, error: memberError } = await supabase
+    .from("workspace_members")
+    .select("workspace_id")
+    .eq("user_id", userId)
+    .order("created_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+  if (memberError) throw new Error(`Could not load workspace: ${memberError.message}`);
+  if (!membership) throw new Error("No workspace found for this account. Was the database migration applied?");
+  return {
+    supabase,
+    userId,
+    email: typeof email === "string" ? email : null,
+    workspaceId: membership.workspace_id as string,
+  };
+}
+
+/**
  * Resolves the signed-in user and their workspace, redirecting to /login otherwise.
  * Milestone 1 uses the personal workspace created at signup.
  */
@@ -56,21 +91,5 @@ export const requireSession = cache(async (): Promise<SessionContext> => {
   const { data, error } = await supabase.auth.getClaims();
   if (error || !data?.claims?.sub) redirect("/login");
 
-  const userId = data.claims.sub;
-  const { data: membership, error: memberError } = await supabase
-    .from("workspace_members")
-    .select("workspace_id")
-    .eq("user_id", userId)
-    .order("created_at", { ascending: true })
-    .limit(1)
-    .maybeSingle();
-  if (memberError) throw new Error(`Could not load workspace: ${memberError.message}`);
-  if (!membership) throw new Error("No workspace found for this account. Was the database migration applied?");
-
-  return {
-    supabase,
-    userId,
-    email: typeof data.claims.email === "string" ? data.claims.email : null,
-    workspaceId: membership.workspace_id as string,
-  };
+  return sessionFor(supabase, data.claims.sub, data.claims.email);
 });
