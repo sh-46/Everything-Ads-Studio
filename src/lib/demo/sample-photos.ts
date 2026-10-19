@@ -113,3 +113,14 @@ export function hondaSamplePhotos(): SamplePhoto[] {
     ),
   ];
 }
+
+/** A plain text wordmark clearly labeled as a sample — not an OEM logo design. */
+export function sampleLogo(name: string, color: string): SamplePhoto {
+  const width = 900;
+  const height = 220;
+  const markup = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
+  <text x="${width / 2}" y="130" text-anchor="middle" font-family="Helvetica Neue, Arial, sans-serif" font-size="120" font-weight="700" letter-spacing="24" fill="${color}">${name}</text>
+  <text x="${width / 2}" y="200" text-anchor="middle" font-family="Helvetica Neue, Arial, sans-serif" font-size="34" letter-spacing="10" fill="${color}" opacity="0.6">SAMPLE LOGO</text>
+</svg>`;
+  return photo(`logo-${name.toLowerCase()}`, `sample-${name.toLowerCase()}-logo.svg`, width, height, markup);
+}

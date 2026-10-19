@@ -2,6 +2,7 @@
 
 import { Ellipse, Image as KonvaImage, Rect, Text } from "react-konva";
 import { hexToRgba } from "@/domain/color";
+import { fontStack } from "@/domain/fonts";
 import { linearGradientPoints, radialGradientRadius, visibleImageRegion } from "@/domain/geometry";
 import type { GradientLayer, ImageLayer, LogoLayer, ShapeLayer, TextLayer } from "@/domain/scene";
 import { useImageElement } from "../../hooks/use-image-element";
@@ -13,14 +14,17 @@ import { useEditorStore } from "../../store/editor-store";
  */
 
 export function TextNode({ layer }: { layer: TextLayer }) {
+  // Remount when brand fonts finish loading so Konva re-measures with the real font.
+  const fontsVersion = useEditorStore((s) => s.fontsVersion);
   return (
     <>
       {/* Hit/bounds box: the stored text box, independent of how much text overflows. */}
       <Rect width={layer.width} height={layer.height} fill="transparent" />
       <Text
+        key={fontsVersion}
         text={layer.text}
         width={layer.width}
-        fontFamily={layer.fontFamily}
+        fontFamily={fontStack(layer.fontFamily)}
         fontSize={layer.fontSize}
         fontStyle={String(layer.fontWeight)}
         letterSpacing={layer.letterSpacing}
@@ -52,7 +56,7 @@ function PhotoContent({
   placeholder: string;
 }) {
   const asset = useEditorStore((s) => (layer.assetId ? s.assets.find((a) => a.id === layer.assetId) : undefined));
-  const { status, image } = useImageElement(asset?.id ?? null, asset?.url ?? null);
+  const { status, image } = useImageElement(asset ? `${asset.id}|${asset.url}` : null, asset?.url ?? null);
   const frame = { width: layer.width, height: layer.height };
 
   if (status !== "loaded" || !image) {
@@ -81,14 +85,12 @@ function PhotoContent({
     );
   }
 
-  const region = visibleImageRegion(
-    { width: image.naturalWidth, height: image.naturalHeight },
-    frame,
-    fit,
-    focalX,
-    focalY,
-    zoom,
-  );
+  // SVGs without intrinsic size report 0; fall back to the size recorded at upload.
+  const natural = {
+    width: image.naturalWidth || asset?.width || layer.width,
+    height: image.naturalHeight || asset?.height || layer.height,
+  };
+  const region = visibleImageRegion(natural, frame, fit, focalX, focalY, zoom);
   return (
     <>
       <Rect {...frame} fill="transparent" />

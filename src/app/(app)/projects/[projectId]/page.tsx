@@ -7,7 +7,11 @@ import { PageHeader } from "@/components/app/page-header";
 import { Button } from "@/components/ui/button";
 import { ProjectActions } from "@/features/projects/components/project-actions";
 import { ProjectMetaForm } from "@/features/projects/components/project-meta-form";
+import { referencedAssetIds } from "@/domain/scene-photos";
+import { listProjectPhotos } from "@/features/assets/queries";
+import { ScenesOverview } from "@/features/projects/components/scenes-overview";
 import { getProject, listScenes } from "@/features/projects/queries";
+import { isDemoMode } from "@/lib/demo/mode";
 import { requireSession } from "@/lib/supabase/server";
 import { Suspense } from "react";
 import PageSkeleton from "@/app/(app)/loading";
@@ -21,6 +25,7 @@ async function ProjectPageContent({ params }: PageProps<"/projects/[projectId]">
   const project = await getProject(ctx, projectId);
   if (!project) notFound();
   const scenes = await listScenes(ctx, projectId);
+  const photos = await listProjectPhotos(ctx, projectId, [...referencedAssetIds(scenes.map((s) => s.document))]);
 
   return (
     <>
@@ -42,26 +47,18 @@ async function ProjectPageContent({ params }: PageProps<"/projects/[projectId]">
       />
 
       <div className="grid gap-10 lg:grid-cols-[1fr_320px]">
-        <section aria-labelledby="scenes-heading">
-          <h2 id="scenes-heading" className="mb-4 text-sm font-semibold">
-            Scenes
-          </h2>
-          <ol className="divide-border border-border divide-y rounded-xl border">
-            {scenes.map((scene) => (
-              <li key={scene.id} className="flex items-center gap-4 px-4 py-3">
-                <span className="text-muted-foreground w-5 text-xs tabular-nums">{scene.position + 1}</span>
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium">{scene.name}</p>
-                  <p className="text-muted-foreground text-xs">
-                    {scene.document.width}×{scene.document.height} · {scene.document.layers.length} layers ·{" "}
-                    {(scene.document.durationMs / 1000).toFixed(1)}s
-                  </p>
-                </div>
-                <span className="text-muted-foreground text-[11px]">rev {scene.revision}</span>
-              </li>
-            ))}
-          </ol>
-        </section>
+        <ScenesOverview
+          projectId={project.id}
+          scenes={scenes}
+          photos={photos}
+          demoMode={isDemoMode()}
+          target={{
+            workspaceId: project.workspaceId,
+            brandId: project.brandId,
+            projectId: project.id,
+            demoMode: isDemoMode(),
+          }}
+        />
 
         <aside className="space-y-8">
           <section aria-labelledby="details-heading">
@@ -89,10 +86,10 @@ async function ProjectPageContent({ params }: PageProps<"/projects/[projectId]">
               className="text-muted-foreground hover:text-foreground block"
               href={`/projects/${project.id}/preview`}
             >
-              Preview →
+              Scene & full experience preview →
             </Link>
             <Link className="text-muted-foreground hover:text-foreground block" href={`/projects/${project.id}/export`}>
-              Export →
+              Export (Phase 4) →
             </Link>
           </section>
         </aside>

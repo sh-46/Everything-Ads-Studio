@@ -9,9 +9,20 @@ import { Label } from "@/components/ui/label";
 import type { BrandKit, TypeStyle } from "@/domain/brand-kit";
 import { hexToRgba } from "@/domain/color";
 import { formatExportName } from "@/domain/export-config";
-import { FONT_WEIGHTS, SYSTEM_FONT_FAMILIES } from "@/domain/fonts";
+import { brandFontsFromAssets, type Asset } from "@/domain/asset";
+import { FONT_WEIGHTS, fontStack, SYSTEM_FONT_FAMILIES } from "@/domain/fonts";
+import {
+  CONTINUOUS_LABELS,
+  CONTINUOUS_PRESETS,
+  EASING_LABELS,
+  EASINGS,
+  ENTRANCE_LABELS,
+  ENTRANCE_PRESETS,
+} from "@/domain/motion";
+import type { UploadTarget } from "@/features/assets/upload";
 import { TYPE_STYLE_REFS, type TypeStyleRef } from "@/domain/scene";
 import { renameBrand, updateBrandKit } from "../actions";
+import { FontLibrary, LogoLibrary } from "./brand-assets";
 
 const STYLE_LABELS: Record<TypeStyleRef, string> = {
   headline: "Headline",
@@ -20,9 +31,19 @@ const STYLE_LABELS: Record<TypeStyleRef, string> = {
   cta: "CTA",
 };
 
-function Card({ title, description, children }: { title: string; description?: string; children: React.ReactNode }) {
+function Card({
+  title,
+  description,
+  children,
+  id,
+}: {
+  title: string;
+  description?: string;
+  children: React.ReactNode;
+  id?: string;
+}) {
   return (
-    <section className="border-border rounded-xl border p-5">
+    <section id={id} className="border-border scroll-mt-20 rounded-xl border p-5">
       <h2 className="text-sm font-semibold">{title}</h2>
       {description && <p className="text-muted-foreground mt-0.5 text-xs">{description}</p>}
       <div className="mt-4">{children}</div>
@@ -34,13 +55,20 @@ function TypeStyleEditor({
   label,
   style,
   onChange,
+  brandFamilies,
 }: {
   label: string;
   style: TypeStyle;
   onChange: (style: TypeStyle) => void;
+  brandFamilies: string[];
 }) {
   const set = <K extends keyof TypeStyle>(key: K, value: TypeStyle[K]) => onChange({ ...style, [key]: value });
-  const fonts = [...new Set([style.fontFamily, ...SYSTEM_FONT_FAMILIES])].map((f) => ({ value: f, label: f }));
+  const fonts = [
+    ...brandFamilies.map((f) => ({ value: f, label: `${f} · Brand` })),
+    ...[...new Set([style.fontFamily, ...SYSTEM_FONT_FAMILIES])]
+      .filter((f) => !brandFamilies.includes(f))
+      .map((f) => ({ value: f, label: f })),
+  ];
   return (
     <div className="border-border grid gap-4 border-b py-4 last:border-0 md:grid-cols-[1fr_1.2fr]">
       <div className="space-y-2">
@@ -79,7 +107,7 @@ function TypeStyleEditor({
         {/* Preview at 50% of the 1080-wide production size. */}
         <p
           style={{
-            fontFamily: style.fontFamily,
+            fontFamily: fontStack(style.fontFamily),
             fontSize: style.fontSize / 2,
             fontWeight: style.fontWeight,
             letterSpacing: style.letterSpacing / 2,
@@ -99,12 +127,21 @@ export function BrandKitForm({
   brandName,
   initialKit,
   initialRevision,
+  initialAssets,
+  target,
+  demoMode,
 }: {
   brandId: string;
   brandName: string;
   initialKit: BrandKit;
   initialRevision: number;
+  /** This brand's logos and fonts only. */
+  initialAssets: Asset[];
+  target: UploadTarget;
+  demoMode: boolean;
 }) {
+  const [assets, setAssets] = useState(initialAssets);
+  const brandFamilies = [...new Set(brandFontsFromAssets(assets).map((f) => f.family))].sort();
   const router = useRouter();
   const [kit, setKit] = useState(initialKit);
   const [name, setName] = useState(brandName);
@@ -191,9 +228,26 @@ export function BrandKitForm({
             key={ref}
             label={STYLE_LABELS[ref]}
             style={kit.typography[ref]}
+            brandFamilies={brandFamilies}
             onChange={(style) => update("typography", { ...kit.typography, [ref]: style })}
           />
         ))}
+      </Card>
+
+      <Card
+        id="fonts"
+        title="Brand fonts"
+        description="Upload the OEM’s font files once; they’re loaded in the editor and the motion preview for every project of this brand."
+      >
+        <FontLibrary assets={assets} setAssets={setAssets} target={target} kit={kit} demoMode={demoMode} />
+      </Card>
+
+      <Card
+        id="logos"
+        title="Logo library"
+        description="Logo variants for this brand only. Use Add Logo in the Scene Editor to place one."
+      >
+        <LogoLibrary assets={assets} setAssets={setAssets} target={target} />
       </Card>
 
       <Card title="Photo scrim" description="Default gradient layout presets place over photography.">
@@ -292,12 +346,42 @@ export function BrandKitForm({
         </div>
       </Card>
 
-      <Card title="Not yet available" description="These Brand Kit features are planned and not active in this build.">
-        <ul className="text-muted-foreground list-inside list-disc space-y-1 text-xs">
-          <li>Brand font upload (Milestone 2) — system fonts are used until then.</li>
-          <li>Logo library (Milestone 2).</li>
-          <li>Motion presets and easing defaults (Phase 3).</li>
-        </ul>
+      <Card
+        title="Motion defaults"
+        description="Applied when layers are created. Changing them never alters existing scenes."
+      >
+        <div className="grid max-w-2xl gap-2 sm:grid-cols-2">
+          <SelectField
+            label="Enter"
+            value={kit.motionDefaults.entrancePreset}
+            options={ENTRANCE_PRESETS.map((p) => ({ value: p, label: ENTRANCE_LABELS[p] }))}
+            onChange={(entrancePreset) => update("motionDefaults", { ...kit.motionDefaults, entrancePreset })}
+          />
+          <NumberField
+            label="Dur"
+            suffix="s"
+            min={0}
+            max={20}
+            step={0.1}
+            precision={2}
+            value={kit.motionDefaults.entranceDurationMs / 1000}
+            onChange={(v) =>
+              update("motionDefaults", { ...kit.motionDefaults, entranceDurationMs: Math.round(v * 1000) })
+            }
+          />
+          <SelectField
+            label="Ease"
+            value={kit.motionDefaults.easing}
+            options={EASINGS.map((e) => ({ value: e, label: EASING_LABELS[e] }))}
+            onChange={(easing) => update("motionDefaults", { ...kit.motionDefaults, easing })}
+          />
+          <SelectField
+            label="Photo"
+            value={kit.motionDefaults.photoMotion}
+            options={CONTINUOUS_PRESETS.map((p) => ({ value: p, label: CONTINUOUS_LABELS[p] }))}
+            onChange={(photoMotion) => update("motionDefaults", { ...kit.motionDefaults, photoMotion })}
+          />
+        </div>
       </Card>
     </div>
   );

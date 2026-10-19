@@ -2,17 +2,19 @@
 
 import { ArrowDownToLine, ArrowUpToLine, Copy, Trash2 } from "lucide-react";
 import dynamic from "next/dynamic";
-import { useLayoutEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useState } from "react";
 import { cn } from "cn";
 import { Button } from "@/components/ui/button";
-import type { Asset } from "@/domain/asset";
+import { brandFontsFromAssets, type Asset } from "@/domain/asset";
+import { useBrandFonts } from "@/features/fonts/use-brand-fonts";
 import type { BrandKit } from "@/domain/brand-kit";
 import type { Scene } from "@/domain/scene";
 import { useAutosave } from "../hooks/use-autosave";
 import { useKeyboardShortcuts } from "../hooks/use-keyboard-shortcuts";
 import { useEditorStore, useSelectedLayer } from "../store/editor-store";
 import { AssetLibrary } from "./asset-library";
-import { AddLayerToolbar, PlaybackControls, ZoomControls } from "./canvas-toolbar";
+import { AddLayerToolbar, ZoomControls } from "./canvas-toolbar";
+import { CanvasModeToggle, EditorPreview } from "./editor-preview";
 import { EditorTopBar } from "./editor-top-bar";
 import { InspectorPanel } from "./inspector/inspector-panel";
 import { LayerList } from "./layer-list";
@@ -29,6 +31,8 @@ const CanvasStage = dynamic(() => import("./canvas-stage"), {
 
 export interface EditorShellProps {
   workspaceId: string;
+  /** Scene to open first (from the Scenes Overview). */
+  initialSceneId?: string;
   /** Local Demo Mode (decided on the server; never read from client env). */
   demoMode: boolean;
   projectId: string;
@@ -102,15 +106,25 @@ export function EditorShell(props: EditorShellProps) {
       kit: props.kit,
       assets: props.assets,
       scenes: props.scenes,
+      uploadTarget: {
+        workspaceId: props.workspaceId,
+        brandId: props.brandId,
+        projectId: props.projectId,
+        demoMode: props.demoMode,
+      },
     });
+    if (props.initialSceneId) useEditorStore.getState().setActiveScene(props.initialSceneId);
     // Server props are only the initial state; later changes live in the store.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.projectId]);
 
   useAutosave();
   useKeyboardShortcuts();
+  useEditorFonts();
+  const canvasMode = useEditorStore((s) => s.canvasMode);
+  const uploadTarget = useEditorStore((s) => s.uploadTarget);
 
-  if (!initialized) return null;
+  if (!initialized || !uploadTarget) return null;
 
   return (
     <div className="bg-background text-foreground flex h-dvh flex-col">
@@ -150,25 +164,19 @@ export function EditorShell(props: EditorShellProps) {
             ))}
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto" role="tabpanel">
-            {tab === "layers" ? (
-              <LayerList />
-            ) : (
-              <AssetLibrary workspaceId={props.workspaceId} demoMode={props.demoMode} />
-            )}
+            {tab === "layers" ? <LayerList /> : <AssetLibrary target={uploadTarget} demoMode={props.demoMode} />}
           </div>
         </aside>
 
         <main className="bg-muted/40 flex min-w-0 flex-1 flex-col">
-          <div className="border-border bg-background flex h-10 shrink-0 items-center justify-between border-b px-2">
+          <div className="border-border bg-background relative flex h-10 shrink-0 items-center justify-between border-b px-2">
             <AddLayerToolbar />
             <SelectionActions />
           </div>
-          <div className="min-h-0 flex-1">
-            <CanvasStage />
-          </div>
+          <div className="min-h-0 flex-1">{canvasMode === "edit" ? <CanvasStage /> : <EditorPreview />}</div>
           <div className="border-border bg-background flex h-10 shrink-0 items-center justify-between border-t px-2">
-            <PlaybackControls />
-            <ZoomControls />
+            <CanvasModeToggle />
+            {canvasMode === "edit" && <ZoomControls />}
           </div>
         </main>
 
@@ -176,4 +184,13 @@ export function EditorShell(props: EditorShellProps) {
       </div>
     </div>
   );
+}
+
+/** Loads the brand's uploaded fonts (FontFace) and publishes their state to the store. */
+function useEditorFonts() {
+  const assets = useEditorStore((s) => s.assets);
+  const setFontState = useEditorStore((s) => s.setFontState);
+  const fonts = useMemo(() => brandFontsFromAssets(assets), [assets]);
+  const { status, version } = useBrandFonts(fonts);
+  useEffect(() => setFontState(status, version), [status, version, setFontState]);
 }

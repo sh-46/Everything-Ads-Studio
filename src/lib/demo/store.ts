@@ -1,6 +1,12 @@
 import "server-only";
 
-import type { Asset } from "@/domain/asset";
+import {
+  documentUsesAsset,
+  type Asset,
+  type AssetMetadata,
+  type AssetMetaUpdate,
+  type AssetUsage,
+} from "@/domain/asset";
 import { brandKitSchema, defaultBrandKit, type BrandKit } from "@/domain/brand-kit";
 import { defaultExportConfig } from "@/domain/export-config";
 import type { ProjectMetaInput, ProjectStatus } from "@/domain/project";
@@ -8,7 +14,7 @@ import type { ImageLayer, Scene, SceneDocument, SceneKind, TextLayer } from "@/d
 import { defaultProjectScenes } from "@/domain/scene-templates";
 import type { BrandDetail, BrandSummary } from "@/features/brands/queries";
 import type { ProjectFilters, ProjectListItem } from "@/features/projects/queries";
-import { acuraSamplePhotos, hondaSamplePhotos, type SamplePhoto } from "./sample-photos";
+import { acuraSamplePhotos, hondaSamplePhotos, sampleLogo, type SamplePhoto } from "./sample-photos";
 
 /**
  * In-memory data for Demo Mode. Lives in the dev server process (survives hot reload,
@@ -36,6 +42,8 @@ interface AssetRecord {
   asset: Asset;
   brandId: string;
   bytes?: Uint8Array;
+  /** Bumped when the file is replaced, so URLs (and image caches) change. */
+  version?: number;
 }
 
 interface DemoDb {
@@ -108,10 +116,32 @@ function addPhotos(db: DemoDb, brandId: string, projectId: string, photos: Sampl
         mimeType: "image/svg+xml",
         projectId,
         createdAt: now(600 + i),
+        displayName: null,
+        metadata: {},
       },
     });
   });
   return idsByKey;
+}
+
+function addSampleLogo(db: DemoDb, brandId: string, logo: SamplePhoto) {
+  const id = crypto.randomUUID();
+  db.assets.set(id, {
+    brandId,
+    asset: {
+      id,
+      kind: "logo",
+      url: logo.dataUrl,
+      width: logo.width,
+      height: logo.height,
+      originalFilename: logo.filename,
+      mimeType: "image/svg+xml",
+      projectId: null,
+      createdAt: now(900),
+      displayName: "Sample wordmark",
+      metadata: { variant: "Primary" },
+    },
+  });
 }
 
 function addProject(
@@ -178,6 +208,9 @@ function seed(): DemoDb {
     kitRevision: 1,
   });
 
+  addSampleLogo(db, DEMO_IDS.acura, sampleLogo("ACURA", "#FFFFFF"));
+  addSampleLogo(db, DEMO_IDS.honda, sampleLogo("HONDA", "#0F1B2D"));
+
   const mdxPhotos = addPhotos(db, DEMO_IDS.acura, DEMO_IDS.mdx, acuraSamplePhotos());
   addProject(
     db,
@@ -232,7 +265,8 @@ function seed(): DemoDb {
   return db;
 }
 
-const globalKey = "__everythingAdsDemoStore" as const;
+// Versioned so a dev server running older code reseeds instead of reusing a stale shape.
+const globalKey = "__everythingAdsDemoStore_v2" as const;
 type GlobalWithDemo = typeof globalThis & { [globalKey]?: DemoDb };
 
 function db(): DemoDb {
@@ -387,43 +421,150 @@ export function demoSaveScene(input: {
 
 // ---------------------------------------------------------------------------- assets
 
-export function demoListBrandPhotos(brandId: string): Asset[] {
+function assetUrl(id: string, version: number): string {
+  return `/api/demo/assets/${id}?v=${version}`;
+}
+
+/** Project photos plus any other assets its scenes reference (e.g. after duplication). */
+export function demoListProjectPhotos(projectId: string, referencedIds: Iterable<string> = []): Asset[] {
+  const extra = new Set(referencedIds);
   return copy(
     [...db().assets.values()]
-      .filter((a) => a.brandId === brandId && a.asset.kind === "photo")
       .map((a) => a.asset)
+      .filter((a) => a.kind === "photo" && (a.projectId === projectId || extra.has(a.id)))
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
   );
 }
 
-export function demoAddUploadedPhoto(input: {
-  projectId: string;
+/** Logos and fonts of one brand's Brand Kit. */
+export function demoListBrandKitAssets(brandId: string): Asset[] {
+  return copy(
+    [...db().assets.values()]
+      .filter((a) => a.brandId === brandId && a.asset.kind !== "photo")
+      .map((a) => a.asset)
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt)),
+  );
+}
+
+export function demoGetAsset(assetId: string): (Asset & { brandId: string }) | null {
+  const record = db().assets.get(assetId);
+  return record ? copy({ ...record.asset, brandId: record.brandId }) : null;
+}
+
+export interface DemoFileInput {
   bytes: Uint8Array;
   mimeType: string;
-  width: number;
-  height: number;
+  width: number | null;
+  height: number | null;
   originalFilename: string;
-}): Asset | null {
+}
+
+export function demoAddAsset(
+  input: DemoFileInput & {
+    kind: Asset["kind"];
+    brandId: string;
+    projectId: string | null;
+    displayName: string | null;
+    metadata: AssetMetadata;
+  },
+): Asset | null {
   const store = db();
-  const project = store.projects.get(input.projectId);
-  if (!project) return null;
+  if (!store.brands.has(input.brandId)) return null;
+  if (input.projectId && store.projects.get(input.projectId)?.brandId !== input.brandId) return null;
   const id = crypto.randomUUID();
   const asset: Asset = {
     id,
-    kind: "photo",
-    url: `/api/demo/assets/${id}`,
+    kind: input.kind,
+    url: assetUrl(id, 1),
     width: input.width,
     height: input.height,
     originalFilename: input.originalFilename,
     mimeType: input.mimeType,
-    projectId: project.id,
+    projectId: input.projectId,
     createdAt: now(),
+    displayName: input.displayName,
+    metadata: input.metadata,
   };
-  store.assets.set(id, { asset, brandId: project.brandId, bytes: input.bytes });
+  store.assets.set(id, { asset, brandId: input.brandId, bytes: input.bytes, version: 1 });
   return copy(asset);
 }
 
-export function demoGetUploadedPhoto(assetId: string): { bytes: Uint8Array; mimeType: string } | null {
+export function demoReplaceAssetFile(assetId: string, file: DemoFileInput): Asset | null {
+  const record = db().assets.get(assetId);
+  if (!record) return null;
+  record.version = (record.version ?? 1) + 1;
+  record.bytes = file.bytes;
+  record.asset = {
+    ...record.asset,
+    mimeType: file.mimeType,
+    width: file.width,
+    height: file.height,
+    originalFilename: file.originalFilename,
+    url: assetUrl(assetId, record.version),
+  };
+  return copy(record.asset);
+}
+
+export function demoUpdateAssetMeta(assetId: string, update: AssetMetaUpdate): Asset | null {
+  const record = db().assets.get(assetId);
+  if (!record) return null;
+  if (update.displayName !== undefined) record.asset.displayName = update.displayName;
+  if (update.metadata) record.asset.metadata = { ...record.asset.metadata, ...update.metadata };
+  return copy(record.asset);
+}
+
+export function demoAssetUsage(assetId: string): AssetUsage[] {
+  const store = db();
+  const record = store.assets.get(assetId);
+  if (!record) return [];
+  const usage: AssetUsage[] = [];
+  for (const project of [...store.projects.values()].filter((p) => p.brandId === record.brandId)) {
+    for (const scene of [...store.scenes.values()]
+      .filter((s) => s.projectId === project.id)
+      .sort((a, b) => a.position - b.position)) {
+      if (documentUsesAsset(scene.document, record.asset)) {
+        usage.push({ projectId: project.id, projectName: project.name, sceneId: scene.id, sceneName: scene.name });
+      }
+    }
+  }
+  return usage;
+}
+
+export function demoDeleteAsset(assetId: string): boolean {
+  return db().assets.delete(assetId);
+}
+
+export function demoGetAssetFile(assetId: string): { bytes: Uint8Array; mimeType: string } | null {
   const record = db().assets.get(assetId);
   return record?.bytes ? { bytes: record.bytes, mimeType: record.asset.mimeType } : null;
+}
+
+// ------------------------------------------------------------- scene-level operations
+
+export function demoGetSceneWithBrand(sceneId: string): { scene: Scene; kit: BrandKit; brandId: string } | null {
+  const store = db();
+  const scene = store.scenes.get(sceneId);
+  const project = scene && store.projects.get(scene.projectId);
+  const brand = project && store.brands.get(project.brandId);
+  return scene && brand ? copy({ scene, kit: brand.kit, brandId: brand.id }) : null;
+}
+
+export function demoDuplicateScene(sourceSceneId: string, name: string, document: SceneDocument): Scene | null {
+  const store = db();
+  const source = store.scenes.get(sourceSceneId);
+  if (!source) return null;
+  const position =
+    Math.max(...[...store.scenes.values()].filter((s) => s.projectId === source.projectId).map((s) => s.position)) + 1;
+  const scene: Scene = {
+    id: crypto.randomUUID(),
+    projectId: source.projectId,
+    name,
+    kind: source.kind,
+    position,
+    revision: 1,
+    document: copy(document),
+    updatedAt: now(),
+  };
+  store.scenes.set(scene.id, scene);
+  return copy(scene);
 }

@@ -1,204 +1,172 @@
 "use client";
 
-import { AlertCircle, Loader2, Upload } from "lucide-react";
-import { useRef, useState } from "react";
+import { ImagePlus, MoreHorizontal, Replace, Trash2 } from "lucide-react";
+import Link from "next/link";
+import { useState } from "react";
 import { cn } from "cn";
-import { Button } from "@/components/ui/button";
-import { MAX_PHOTO_BYTES, PHOTO_MIME_TYPES, photoStoragePath, type Asset } from "@/domain/asset";
-import { makeLayer, type ImageLayer } from "@/domain/scene";
-import { createClient } from "@/lib/supabase/client";
-import { registerPhoto } from "@/features/assets/actions";
-import { useActiveScene, useEditorStore, useSelectedLayer } from "../store/editor-store";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { assetLabel, type Asset } from "@/domain/asset";
+import { AssetThumb } from "@/features/assets/components/asset-picker-dialog";
+import { DeleteAssetDialog } from "@/features/assets/components/delete-asset-dialog";
+import { FileDropZone, UploadQueue } from "@/features/assets/components/upload-widgets";
+import { useUploader } from "@/features/assets/components/use-uploader";
+import type { UploadTarget } from "@/features/assets/upload";
+import { useInsertMedia } from "../hooks/use-insert-media";
+import { useEditorStore, useSelectedLayer } from "../store/editor-store";
 
-type PhotoMime = (typeof PHOTO_MIME_TYPES)[number];
+type Tab = "photos" | "logos";
 
-interface UploadItem {
-  id: string;
-  name: string;
-  status: "uploading" | "error";
-  error?: string;
-}
-
-async function readDimensions(file: File): Promise<{ width: number; height: number }> {
-  const bitmap = await createImageBitmap(file);
-  const size = { width: bitmap.width, height: bitmap.height };
-  bitmap.close();
-  return size;
-}
-
-export function AssetLibrary({ workspaceId, demoMode }: { workspaceId: string; demoMode: boolean }) {
+/**
+ * Project photo library and the brand's logo library. Clicking a photo places it in the
+ * selected image frame (keeping the frame's layout and motion) or adds a new layer.
+ */
+export function AssetLibrary({ target, demoMode }: { target: UploadTarget; demoMode: boolean }) {
   const assets = useEditorStore((s) => s.assets);
-  const projectId = useEditorStore((s) => s.projectId);
   const brandId = useEditorStore((s) => s.brandId);
   const addAsset = useEditorStore((s) => s.addAsset);
-  const addLayer = useEditorStore((s) => s.addLayer);
+  const removeAsset = useEditorStore((s) => s.removeAsset);
   const updateLayer = useEditorStore((s) => s.updateLayer);
-  const scene = useActiveScene();
   const selected = useSelectedLayer();
-  const inputRef = useRef<HTMLInputElement>(null);
-  const [uploads, setUploads] = useState<UploadItem[]>([]);
+  const { insertPhoto, insertLogo } = useInsertMedia();
+  const { items, upload, dismiss, busy } = useUploader(target);
+  const [tab, setTab] = useState<Tab>("photos");
+  const [deleting, setDeleting] = useState<Asset | null>(null);
 
-  const setUpload = (id: string, patch: Partial<UploadItem> | null) =>
-    setUploads((list) =>
-      patch ? list.map((u) => (u.id === id ? { ...u, ...patch } : u)) : list.filter((u) => u.id !== id),
-    );
+  const photos = assets.filter((a) => a.kind === "photo");
+  const logos = assets.filter((a) => a.kind === "logo");
+  const canReplacePhoto = selected?.type === "image";
+  const canReplaceLogo = selected?.type === "logo";
 
-  const uploadFile = async (file: File) => {
-    const id = crypto.randomUUID();
-    setUploads((list) => [...list, { id, name: file.name, status: "uploading" }]);
-    try {
-      if (!(PHOTO_MIME_TYPES as readonly string[]).includes(file.type)) {
-        throw new Error("Use JPG, PNG or WebP photos.");
-      }
-      if (file.size > MAX_PHOTO_BYTES) throw new Error("Photos must be 25 MB or smaller.");
-      const mimeType = file.type as PhotoMime;
-      const { width, height } = await readDimensions(file);
+  const placePhoto = (asset: Asset) =>
+    canReplacePhoto ? updateLayer(selected.id, { assetId: asset.id }) : insertPhoto(asset);
+  const placeLogo = (asset: Asset) =>
+    canReplaceLogo ? updateLayer(selected.id, { assetId: asset.id }) : insertLogo(asset);
 
-      if (demoMode) {
-        // Local Demo Mode: the dev server keeps the file in memory; Supabase is not involved.
-        const form = new FormData();
-        form.set("file", file);
-        form.set("projectId", projectId);
-        form.set("width", String(width));
-        form.set("height", String(height));
-        const response = await fetch("/api/demo/assets", { method: "POST", body: form });
-        const body = (await response.json()) as Asset | { error: string };
-        if (!response.ok || "error" in body) throw new Error("error" in body ? body.error : "Upload failed");
-        addAsset(body);
-        setUpload(id, null);
-        return;
-      }
-
-      const path = photoStoragePath(workspaceId, brandId, projectId, id, mimeType);
-
-      const { error: uploadError } = await createClient()
-        .storage.from("assets")
-        .upload(path, file, { contentType: mimeType, upsert: false, cacheControl: "31536000" });
-      if (uploadError) throw new Error(uploadError.message);
-
-      const result = await registerPhoto({
-        projectId,
-        storagePath: path,
-        mimeType,
-        byteSize: file.size,
-        width,
-        height,
-        originalFilename: file.name,
-      });
-      if (!result.ok) throw new Error(result.error);
-      addAsset(result.data);
-      setUpload(id, null);
-    } catch (error) {
-      setUpload(id, { status: "error", error: error instanceof Error ? error.message : "Upload failed" });
-    }
-  };
-
-  const placeAsset = (asset: Asset) => {
-    if (selected?.type === "image") {
-      updateLayer(selected.id, { assetId: asset.id });
-      return;
-    }
-    if (!scene) return;
-    const { width, height } = scene.document;
-    addLayer(
-      makeLayer<ImageLayer>({
-        type: "image",
-        name: asset.originalFilename.replace(/\.[^.]+$/, "").slice(0, 80) || "Photo",
-        assetId: asset.id,
-        fit: "cover",
-        focalX: 0.5,
-        focalY: 0.5,
-        zoom: 1,
-        x: 0,
-        y: 0,
-        width,
-        height,
-      }),
-    );
-  };
+  const list = tab === "photos" ? photos : logos;
 
   return (
     <div className="flex flex-col gap-2 p-2">
-      <input
-        ref={inputRef}
-        type="file"
-        accept={PHOTO_MIME_TYPES.join(",")}
-        multiple
-        className="sr-only"
-        aria-label="Upload photos"
-        data-testid="photo-upload-input"
-        onChange={(e) => {
-          const files = Array.from(e.target.files ?? []);
-          e.target.value = "";
-          files.forEach((f) => void uploadFile(f));
-        }}
-      />
-      <Button variant="outline" size="sm" onClick={() => inputRef.current?.click()}>
-        <Upload /> Upload photos
-      </Button>
+      <div className="flex gap-1" role="tablist" aria-label="Asset type">
+        {(["photos", "logos"] as const).map((t) => (
+          <button
+            key={t}
+            role="tab"
+            type="button"
+            aria-selected={tab === t}
+            onClick={() => setTab(t)}
+            className={cn(
+              "rounded-md px-2 py-1 text-xs capitalize",
+              tab === t ? "bg-muted text-foreground font-medium" : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            {t}{" "}
+            <span className="text-muted-foreground tabular-nums">{t === "photos" ? photos.length : logos.length}</span>
+          </button>
+        ))}
+      </div>
+
+      {tab === "photos" ? (
+        <FileDropZone
+          kind="photo"
+          label="Upload photos"
+          hint="JPG, PNG, WebP · drop files here or onto the canvas"
+          onFiles={(files) => void upload(files, "photo").then((uploaded) => uploaded.forEach(addAsset))}
+          disabled={busy}
+          testId="photo-upload-input"
+        />
+      ) : (
+        <FileDropZone
+          kind="logo"
+          label="Upload logos"
+          hint="SVG, PNG, WebP · saved to the Brand Kit"
+          onFiles={(files) =>
+            void upload(files, "logo", () => ({ metadata: { variant: "Primary" } })).then((uploaded) =>
+              uploaded.forEach(addAsset),
+            )
+          }
+          disabled={busy}
+        />
+      )}
+      <UploadQueue items={items} onDismiss={dismiss} />
+
       <p className="text-muted-foreground px-0.5 text-[11px] leading-relaxed">
-        {selected?.type === "image"
-          ? "Click a photo to place it in the selected image layer."
-          : "Click a photo to add it as a full-scene image layer."}
+        {tab === "photos"
+          ? canReplacePhoto
+            ? "Click a photo to replace the selected frame’s photo (layout and motion are kept)."
+            : "Click a photo to add it as a new layer."
+          : canReplaceLogo
+            ? "Click a logo to replace the selected logo."
+            : "Click a logo to add it to the scene."}
+        {demoMode && " Demo Mode: uploads last until the dev server restarts."}
       </p>
 
-      {uploads.map((u) => (
-        <div
-          key={u.id}
-          className={cn(
-            "flex items-start gap-2 rounded-md border px-2 py-1.5 text-[11px]",
-            u.status === "error" ? "border-destructive/40 text-destructive" : "border-border text-muted-foreground",
-          )}
-        >
-          {u.status === "uploading" ? (
-            <Loader2 className="mt-0.5 size-3 shrink-0 animate-spin" />
-          ) : (
-            <AlertCircle className="mt-0.5 size-3 shrink-0" />
-          )}
-          <span className="min-w-0 flex-1">
-            <span className="block truncate">{u.name}</span>
-            {u.error && <span className="block">{u.error}</span>}
-          </span>
-          {u.status === "error" && (
-            <button type="button" className="underline" onClick={() => setUpload(u.id, null)}>
-              Dismiss
-            </button>
-          )}
-        </div>
-      ))}
-
-      {assets.length === 0 && uploads.length === 0 ? (
-        <p className="border-border text-muted-foreground rounded-md border border-dashed p-4 text-center text-xs">
-          No photos for this brand yet.
+      {list.length === 0 ? (
+        <p className="text-muted-foreground rounded-md border border-dashed p-4 text-center text-xs">
+          {tab === "photos" ? "No photos in this project yet." : "No logos in this brand’s Brand Kit yet."}
         </p>
       ) : (
-        <ul className="grid grid-cols-2 gap-1.5" aria-label="Brand photos">
-          {assets.map((asset) => {
-            const inUse = selected?.type === "image" && selected.assetId === asset.id;
+        <ul className="grid grid-cols-2 gap-1.5" aria-label={tab === "photos" ? "Project photos" : "Brand logos"}>
+          {list.map((asset) => {
+            const inUse = selected && "assetId" in selected && selected.assetId === asset.id;
+            const canReplace = tab === "photos" ? canReplacePhoto : canReplaceLogo;
             return (
-              <li key={asset.id}>
+              <li key={asset.id} className="group relative">
                 <button
                   type="button"
-                  onClick={() => placeAsset(asset)}
-                  title={`${asset.originalFilename}${asset.width ? ` · ${asset.width}×${asset.height}` : ""}`}
+                  onClick={() => (tab === "photos" ? placePhoto(asset) : placeLogo(asset))}
+                  title={`${assetLabel(asset)}${asset.width ? ` · ${asset.width}×${asset.height}` : ""}`}
                   className={cn(
-                    "bg-muted hover:ring-ring/40 block aspect-square w-full overflow-hidden rounded-md border transition-shadow hover:ring-2",
+                    "hover:ring-ring/40 block aspect-square w-full overflow-hidden rounded-md border transition-shadow hover:ring-2",
+                    tab === "logos"
+                      ? "bg-[repeating-conic-gradient(#e5e5e5_0_25%,#fff_0_50%)] bg-[length:12px_12px]"
+                      : "bg-muted",
                     inUse ? "border-primary ring-primary/50 ring-2" : "border-border",
                   )}
                 >
-                  {/* eslint-disable-next-line @next/next/no-img-element -- private signed URL */}
-                  <img
-                    src={asset.url}
-                    alt={asset.originalFilename}
-                    className="h-full w-full object-cover"
-                    loading="lazy"
-                  />
+                  <AssetThumb asset={asset} />
                 </button>
+                <DropdownMenu>
+                  <DropdownMenuTrigger
+                    className="bg-background/90 absolute top-1 right-1 rounded p-0.5 opacity-0 shadow-sm group-hover:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100"
+                    aria-label={`Actions for ${assetLabel(asset)}`}
+                  >
+                    <MoreHorizontal className="size-3.5" />
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem onSelect={() => (tab === "photos" ? insertPhoto(asset) : insertLogo(asset))}>
+                      <ImagePlus /> Add as new layer
+                    </DropdownMenuItem>
+                    {canReplace && selected && (
+                      <DropdownMenuItem onSelect={() => updateLayer(selected.id, { assetId: asset.id })}>
+                        <Replace /> Replace in selected layer
+                      </DropdownMenuItem>
+                    )}
+                    <DropdownMenuSeparator />
+                    {tab === "photos" ? (
+                      <DropdownMenuItem variant="destructive" onSelect={() => setDeleting(asset)}>
+                        <Trash2 /> Delete file…
+                      </DropdownMenuItem>
+                    ) : (
+                      <DropdownMenuItem asChild>
+                        <Link href={`/brands/${brandId}/settings#logos`}>Manage in Brand Kit</Link>
+                      </DropdownMenuItem>
+                    )}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+                <p className="text-muted-foreground mt-0.5 truncate text-[10px]">{assetLabel(asset)}</p>
               </li>
             );
           })}
         </ul>
       )}
+
+      <DeleteAssetDialog asset={deleting} onOpenChange={(o) => !o && setDeleting(null)} onDeleted={removeAsset} />
     </div>
   );
 }

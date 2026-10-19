@@ -1,4 +1,6 @@
 import type { BrandKit } from "./brand-kit";
+import { photoMotion, textMotion } from "./brand-motion";
+import type { MotionConfig } from "./motion";
 import type { GradientFill } from "./gradient";
 import type { Rect, Size } from "./geometry";
 import {
@@ -36,9 +38,16 @@ interface Ctx {
   margin: number;
 }
 
-function imageLayer(ctx: Ctx, role: "primaryImage" | "secondaryImage", rect: Rect, name: string): ImageLayer {
+function imageLayer(
+  ctx: Ctx,
+  role: "primaryImage" | "secondaryImage",
+  rect: Rect,
+  name: string,
+  motion: MotionConfig = photoMotion(ctx.kit),
+): ImageLayer {
   const prev = ctx.carried[role];
   const base = makeLayer<ImageLayer>({
+    motion,
     type: "image",
     name,
     role,
@@ -69,6 +78,8 @@ function textLayer(ctx: Ctx, role: "headline" | "subtitle", rect: Rect, align: T
   const style = ctx.kit.typography[role];
   const prev = ctx.carried[role];
   const base = makeLayer<TextLayer>({
+    // Headline enters shortly after the scene starts; the subtitle follows it.
+    motion: role === "headline" ? textMotion(ctx.kit, "sceneStart", 300) : textMotion(ctx.kit, "withPrevious", 250),
     type: "text",
     name: role === "headline" ? "Headline" : "Subtitle",
     role,
@@ -168,7 +179,11 @@ function build(presetId: LayoutPresetId, ctx: Ctx): Layer[] {
       // Photo 2 sits above Photo 1; the Phase 3 image transition reveals it over time.
       return [
         imageLayer(ctx, "primaryImage", { x: 0, y: 0, width: W, height: H }, "Photo 1"),
-        imageLayer(ctx, "secondaryImage", { x: 0, y: 0, width: W, height: H }, "Photo 2 (after Photo 1)"),
+        imageLayer(ctx, "secondaryImage", { x: 0, y: 0, width: W, height: H }, "Photo 2 (after Photo 1)", {
+          ...photoMotion(ctx.kit),
+          delayMs: 2600,
+          transition: { preset: "crossfade", durationMs: 800, easing: "easeInOutCubic", direction: "left" },
+        }),
         scrimLayer(ctx, { x: 0, y: Math.round(H * 0.45), width: W, height: H - Math.round(H * 0.45) }, ctx.kit.scrim),
         ...textBlock(ctx, { bottom: H - ctx.margin * 1.5 }, "left"),
       ];

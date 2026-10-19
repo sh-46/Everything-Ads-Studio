@@ -1,4 +1,5 @@
 import type { BrandKit } from "./brand-kit";
+import { textMotion } from "./brand-motion";
 import { buildLayoutLayers, type LayoutPresetId } from "./layout-presets";
 import {
   makeLayer,
@@ -62,6 +63,7 @@ export function ctaDocument(kit: BrandKit): SceneDocument {
     durationMs: 6000,
     layers: [
       makeLayer<ShapeLayer>({
+        motion: textMotion(kit, "sceneStart", 200),
         type: "shape",
         name: "CTA button",
         role: "ctaButton",
@@ -74,6 +76,7 @@ export function ctaDocument(kit: BrandKit): SceneDocument {
         height: buttonHeight,
       }),
       makeLayer<TextLayer>({
+        motion: textMotion(kit, "withPrevious", 0),
         type: "text",
         name: "CTA label",
         role: "cta",

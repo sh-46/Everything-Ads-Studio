@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { hexColorSchema } from "./color";
 import { gradientFillSchema } from "./gradient";
-import { easingSchema, ENTRANCE_PRESETS } from "./motion";
+import { CONTINUOUS_PRESETS, easingSchema, ENTRANCE_PRESETS } from "./motion";
 import { TYPE_STYLE_REFS, type TypeStyleRef } from "./scene";
 
 export const BRAND_KIT_SCHEMA_VERSION = 1;
@@ -46,16 +46,19 @@ export const brandKitSchema = z.object({
     textColor: hexColorSchema,
     cornerRadius: z.number().min(0).max(200),
   }),
+  /** Applied when layers are created; never re-applied to existing layers. */
   motionDefaults: z.object({
     entrancePreset: z.enum(ENTRANCE_PRESETS),
     entranceDurationMs: z.number().int().min(0).max(20_000),
     easing: easingSchema,
+    /** Continuous motion for new photo layers. */
+    photoMotion: z.enum(CONTINUOUS_PRESETS).default("slowZoomIn"),
   }),
   /** Tokens: {brand} {year} {model} {scene} {width} {height}. */
   exportNaming: z.object({
     pattern: z.string().min(1).max(200),
   }),
-  /** Asset ids of uploaded logos and fonts (upload UI arrives in Milestone 2). */
+  /** Deprecated: logos and fonts live in the assets table (kind "logo" / "font"). Kept for compatibility. */
   logoAssetIds: z.array(z.uuid()).default([]),
   fontAssetIds: z.array(z.uuid()).default([]),
 });
@@ -102,7 +105,12 @@ export function defaultBrandKit(): BrandKit {
       ],
     },
     cta: { label: "Learn More", background: "#FFFFFF", textColor: "#0B0B0C", cornerRadius: 12 },
-    motionDefaults: { entrancePreset: "fadeIn", entranceDurationMs: 600, easing: "easeOutCubic" },
+    motionDefaults: {
+      entrancePreset: "fadeIn",
+      entranceDurationMs: 600,
+      easing: "easeOutCubic",
+      photoMotion: "slowZoomIn",
+    },
     exportNaming: { pattern: "{brand}_{year}_{model}_{scene}_{width}x{height}" },
     logoAssetIds: [],
     fontAssetIds: [],

@@ -4,6 +4,8 @@ import { z } from "zod";
 import { PageHeader } from "@/components/app/page-header";
 import { BrandKitForm } from "@/features/brands/components/brand-kit-form";
 import { getBrand } from "@/features/brands/queries";
+import { listBrandKitAssets } from "@/features/assets/queries";
+import { isDemoMode } from "@/lib/demo/mode";
 import { requireSession } from "@/lib/supabase/server";
 import { Suspense } from "react";
 import PageSkeleton from "@/app/(app)/loading";
@@ -13,8 +15,10 @@ export const metadata: Metadata = { title: "Brand Kit" };
 async function BrandSettingsPageContent({ params }: PageProps<"/brands/[brandId]/settings">) {
   const { brandId } = await params;
   if (!z.uuid().safeParse(brandId).success) notFound();
-  const brand = await getBrand(await requireSession(), brandId);
+  const ctx = await requireSession();
+  const brand = await getBrand(ctx, brandId);
   if (!brand) notFound();
+  const assets = await listBrandKitAssets(ctx, brand.id);
 
   return (
     <>
@@ -32,6 +36,9 @@ async function BrandSettingsPageContent({ params }: PageProps<"/brands/[brandId]
         brandName={brand.name}
         initialKit={brand.kit}
         initialRevision={brand.kitRevision}
+        initialAssets={assets}
+        demoMode={isDemoMode()}
+        target={{ workspaceId: ctx.workspaceId, brandId: brand.id, projectId: null, demoMode: isDemoMode() }}
       />
     </>
   );

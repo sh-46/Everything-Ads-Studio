@@ -7,31 +7,33 @@ Architecture, schema, roadmap and risks: [docs/ARCHITECTURE.md](docs/ARCHITECTUR
 
 ## Status
 
-**Milestone 1 (vertical slice): Create Brand → Create Model Project → Upload Photo → Edit Scene → Save → Reopen.**
+Milestone 1 (vertical slice) plus **Phase 2.5 (photo workflow, Brand Kit fonts & logos)** and
+**Phase 3 (motion engine & preview)**.
 
-| Area                                                                                                                                                                      | State                                        |
-| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
-| Auth (email + password), personal workspace                                                                                                                               | Built                                        |
-| Dashboard: recent projects, search, brand filter, archived toggle                                                                                                         | Built                                        |
-| Brands + Brand Kit (colors, typography, scrim, CTA, export naming)                                                                                                        | Built                                        |
-| Model projects: create (7 standard scenes), edit details, status, duplicate, archive                                                                                      | Built                                        |
-| Photo upload (JPG/PNG/WebP → private Storage, signed URLs)                                                                                                                | Built                                        |
-| Scene editor: text / image / gradient / shape layers, drag, resize, rotate, inspector, align, reorder, undo/redo, shortcuts, zoom/fit, 5 layout presets, scene dimensions | Built                                        |
-| Autosave with Saving / Saved / Error states, retry, revision conflict resolution                                                                                          | Built                                        |
-| Logo layers, brand font upload, multi-select, snapping                                                                                                                    | Milestone 2                                  |
-| Motion presets, playback, Remotion preview                                                                                                                                | Phase 3 (UI shows status, controls disabled) |
-| MP4 / PNG / ZIP export                                                                                                                                                    | Phase 4 (UI shows status, controls disabled) |
-| Copy Assistant                                                                                                                                                            | Phase 5                                      |
+| Area                                                                                                                                                                                            | State                                  |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------- |
+| Auth, workspace, dashboard, brands, Brand Kit, project CRUD                                                                                                                                     | Built                                  |
+| Scene editor: text / image / gradient / shape / logo layers, drag, resize, rotate, inspector, undo/redo, shortcuts, layout presets                                                              | Built                                  |
+| Autosave with Saving / Saved / Error, retry, revision conflict resolution                                                                                                                       | Built                                  |
+| Photo workflow: batch upload, project photo library, Add Image (upload / library / empty frame), canvas drag-and-drop, Replace / Remove keeping layout & motion, safe delete with usage warning | Built                                  |
+| Scenes Overview: photo slots per scene (1–2 photos; CTA optional), assign / replace / remove before opening the editor                                                                          | Built                                  |
+| Brand Kit fonts (TTF/OTF/WOFF/WOFF2, FontFace loading, metadata detection + correction) and Logo Library (SVG/PNG/WebP, variants)                                                               | Built                                  |
+| Motion: entrance, continuous image motion, exit, two-image transitions, sequencing, timing — Motion inspector                                                                                   | Built                                  |
+| Scene Preview (Remotion Player: play, pause, restart, scrub) and Full Experience mobile preview incl. Outro + CTA                                                                               | Built                                  |
+| Scene duplication                                                                                                                                                                               | Built                                  |
+| Multi-select, snapping, workspace invites                                                                                                                                                       | Not started                            |
+| MP4 / PNG / ZIP export (render worker)                                                                                                                                                          | Phase 4 — export buttons stay disabled |
+| Copy Assistant                                                                                                                                                                                  | Phase 5                                |
 
 ## Setup
 
 Requirements: Node 20.9+ and a Supabase project.
 
 1. `npm install`
-2. Apply the database migration: open the Supabase SQL editor and run
-   `supabase/migrations/0001_init.sql` (or `supabase db push` if you use the Supabase CLI).
-   It creates tables, RLS policies, RPCs and the private `assets` storage bucket — see the
-   security summary at the top of the file.
+2. Apply the database migrations in order: open the Supabase SQL editor and run
+   `supabase/migrations/0001_init.sql`, then `0002_brand_assets.sql` (or `supabase db push` with the
+   Supabase CLI). 0001 creates tables, RLS policies, RPCs and the private `assets` bucket; 0002 adds
+   logo/font metadata and the `asset_usage` check. Each file starts with a security summary.
 3. `cp .env.example .env.local` and fill in `NEXT_PUBLIC_SUPABASE_URL` and
    `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` (Project Settings → API). Never add the service-role key.
 4. Optional: in Supabase Auth settings, disable "Confirm email" for faster local testing, or set the
@@ -56,15 +58,47 @@ Sample data: **Acura (Sample)** with **2026 Acura MDX — Sample** (photos and c
 - Every page shows an amber **Demo Mode · sample data** badge.
 - To remove it later, delete `src/lib/demo/`, `src/app/api/demo/` and the `isDemoMode()` guards.
 
-| Command             | What it does                                                                                                 |
-| ------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `npm run dev`       | Dev server                                                                                                   |
-| `npm run build`     | Production build                                                                                             |
-| `npm run lint`      | ESLint                                                                                                       |
-| `npm run typecheck` | Route type generation + `tsc`                                                                                |
-| `npm test`          | Unit tests (geometry, layout presets, schemas, history, layer ops)                                           |
-| `npm run test:db`   | Applies migrations to in-process Postgres (PGlite) and checks RLS isolation, RPCs and optimistic concurrency |
-| `npm run format`    | Prettier                                                                                                     |
+## Testing the photo and motion workflows (Demo Mode)
+
+Start with `npm run dev:demo -- -p 3001` and open
+http://localhost:3001/projects/d0000000-0000-4000-8000-0000000001a1.
+
+**Photos**
+
+1. _Project photos_ → **Upload photos** (select several, or drag them in).
+2. On a scene card, **Upload / choose…** or **Replace…** assigns a photo to Photo 1 or Photo 2. Replace keeps the
+   frame's position, crop and motion. **Remove** unassigns; the file stays in the library.
+3. **Open editor** on a card opens that scene with the photos in place.
+4. In the editor, the image button offers **Upload from computer…**, **Choose from project photos…** and
+   **Empty frame**; you can also drop files onto the canvas. With an image layer selected, use **Replace photo…**
+   in the inspector or click a photo in **Assets → Photos**.
+5. Deleting a file (trash icon / Delete file…) is permanent and first shows where it is used.
+
+**Motion**
+
+1. Select a layer → **Motion** in the inspector: Start (scene start / with previous / after previous), Delay,
+   Entrance, Continuous image motion (photos and logos), Two-image transition (photos), Exit, Hold.
+2. **Preview** (inspector) or **Preview motion** (bottom bar) plays the current scene with Remotion: play, pause,
+   restart, scrub. Edits apply live.
+3. **Preview** in the top bar opens the Full experience (phone mockup — scroll or jump between scenes; the scene
+   in view plays, Outro + CTA shown together) and a per-scene preview.
+
+**Brand fonts and logos** — Brands → Acura (Sample) → Brand Kit → _Brand fonts_ / _Logo library_. Upload, correct
+family/weight/style if needed, then pick the font in Typography or in the editor's Font menu. Place logos with
+the ✦ (Add logo) button in the editor.
+
+## Scripts
+
+| Command             | What it does                                                                                                                                         |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `npm run dev`       | Dev server                                                                                                                                           |
+| `npm run dev:demo`  | Dev server in local Demo Mode (no Supabase)                                                                                                          |
+| `npm run build`     | Production build                                                                                                                                     |
+| `npm run lint`      | ESLint                                                                                                                                               |
+| `npm run typecheck` | Route type generation + `tsc`                                                                                                                        |
+| `npm test`          | Unit tests: geometry, layout presets, schemas, history, layer ops, motion engine, photo slots, asset validation, font parsing, Konva↔CSS consistency |
+| `npm run test:db`   | Applies all migrations to in-process Postgres (PGlite); checks RLS isolation, RPCs, asset usage, optimistic concurrency                              |
+| `npm run format`    | Prettier                                                                                                                                             |
 
 ## Manual verification (Milestone 1)
 

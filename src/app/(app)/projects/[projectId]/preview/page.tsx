@@ -1,40 +1,51 @@
+import { PenTool } from "lucide-react";
 import type { Metadata } from "next";
+import Link from "next/link";
 import { notFound } from "next/navigation";
-import { z } from "zod";
-import { NotYetAvailable } from "@/components/app/not-yet-available";
-import { PageHeader } from "@/components/app/page-header";
-import { getProject } from "@/features/projects/queries";
-import { requireSession } from "@/lib/supabase/server";
 import { Suspense } from "react";
+import { z } from "zod";
 import PageSkeleton from "@/app/(app)/loading";
+import { PageHeader } from "@/components/app/page-header";
+import { Button } from "@/components/ui/button";
+import { referencedAssetIds } from "@/domain/scene-photos";
+import { listBrandKitAssets, listProjectPhotos } from "@/features/assets/queries";
+import { ExperiencePreview } from "@/features/preview/experience-preview";
+import { getProject, listScenes } from "@/features/projects/queries";
+import { requireSession } from "@/lib/supabase/server";
 
 export const metadata: Metadata = { title: "Preview" };
 
 async function PreviewPageContent({ params }: PageProps<"/projects/[projectId]/preview">) {
   const { projectId } = await params;
   if (!z.uuid().safeParse(projectId).success) notFound();
-  const project = await getProject(await requireSession(), projectId);
+  const ctx = await requireSession();
+  const project = await getProject(ctx, projectId);
   if (!project) notFound();
+  const scenes = await listScenes(ctx, projectId);
+  const [photos, kitAssets] = await Promise.all([
+    listProjectPhotos(ctx, projectId, [...referencedAssetIds(scenes.map((s) => s.document))]),
+    listBrandKitAssets(ctx, project.brandId),
+  ]);
 
   return (
     <>
       <PageHeader
         title="Preview"
+        description="Animated preview of the saved scenes. Changes made in the editor appear here once saved."
         crumbs={[
           { label: project.brandName, href: `/brands/${project.brandId}` },
           { label: project.name, href: `/projects/${project.id}` },
           { label: "Preview" },
         ]}
+        actions={
+          <Button asChild size="sm" variant="outline">
+            <Link href={`/projects/${project.id}/editor`}>
+              <PenTool /> Open editor
+            </Link>
+          </Button>
+        }
       />
-      <NotYetAvailable
-        phase="Phase 3 · Motion"
-        summary="Animated preview needs the Remotion motion engine, which is not built yet. The editor canvas shows the static layout."
-        items={[
-          { label: "Scene preview with play, pause, restart and scrub", control: "Play" },
-          { label: "Full experience preview in a mobile mockup", control: "Open" },
-          { label: "Outro + CTA combined preview", control: "Open" },
-        ]}
-      />
+      <ExperiencePreview scenes={scenes} assets={[...photos, ...kitAssets]} brandName={project.brandName} />
     </>
   );
 }

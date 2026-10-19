@@ -5,6 +5,10 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Group, Layer as KonvaLayer, Rect, Stage, Transformer } from "react-konva";
 import { fitScale } from "@/domain/geometry";
 import type { Layer } from "@/domain/scene";
+import { UploadQueue } from "@/features/assets/components/upload-widgets";
+import { useUploader } from "@/features/assets/components/use-uploader";
+import type { UploadTarget } from "@/features/assets/upload";
+import { useInsertMedia } from "../hooks/use-insert-media";
 import { useActiveScene, useEditorStore } from "../store/editor-store";
 import { GradientNode, ImageNode, LogoNode, ShapeNode, TextNode } from "./layers/layer-nodes";
 
@@ -56,6 +60,11 @@ export default function CanvasStage() {
   const transformerRef = useRef<Konva.Transformer>(null);
   const nodeRefs = useRef(new Map<string, Konva.Group>());
 
+  const uploadTarget = useEditorStore((s) => s.uploadTarget) as UploadTarget;
+  const addAsset = useEditorStore((s) => s.addAsset);
+  const { insertPhoto } = useInsertMedia();
+  const uploader = useUploader(uploadTarget);
+  const [dropActive, setDropActive] = useState(false);
   const doc = scene?.document;
   const selected = doc?.layers.find((l) => l.id === selectedLayerId);
   const canTransform = Boolean(selected && selected.visible && !selected.locked);
@@ -93,7 +102,40 @@ export default function CanvasStage() {
   };
 
   return (
-    <div ref={viewportRef} className="h-full w-full overflow-auto" data-testid="editor-canvas">
+    <div
+      ref={viewportRef}
+      className={`relative h-full w-full overflow-auto ${dropActive ? "ring-primary ring-2 ring-inset" : ""}`}
+      data-testid="editor-canvas"
+      onDragOver={(e) => {
+        if (!e.dataTransfer.types.includes("Files")) return;
+        e.preventDefault();
+        setDropActive(true);
+      }}
+      onDragLeave={() => setDropActive(false)}
+      onDrop={(e) => {
+        e.preventDefault();
+        setDropActive(false);
+        const files = Array.from(e.dataTransfer.files);
+        if (files.length === 0) return;
+        // Drop point in scene coordinates, so photos land where they were dropped.
+        const box = e.currentTarget.getBoundingClientRect();
+        const at = {
+          x: (e.clientX - box.left + e.currentTarget.scrollLeft - offsetX) / scale,
+          y: (e.clientY - box.top + e.currentTarget.scrollTop - offsetY) / scale,
+        };
+        void uploader.upload(files, "photo").then((uploaded) =>
+          uploaded.forEach((asset, i) => {
+            addAsset(asset);
+            insertPhoto(asset, { x: at.x + i * 40, y: at.y + i * 40 });
+          }),
+        );
+      }}
+    >
+      {uploader.items.length > 0 && (
+        <div className="absolute top-2 left-2 z-10 w-64">
+          <UploadQueue items={uploader.items} onDismiss={uploader.dismiss} />
+        </div>
+      )}
       {viewport.width > 0 && (
         <Stage
           width={stageWidth}
@@ -148,7 +190,8 @@ export default function CanvasStage() {
               ref={transformerRef}
               rotationSnaps={[0, 45, 90, 135, 180, 225, 270, 315]}
               rotationSnapTolerance={4}
-              keepRatio={false}
+              // Logos keep their proportions; frames and text boxes resize freely.
+              keepRatio={selected?.type === "logo"}
               ignoreStroke
               anchorSize={8}
               anchorCornerRadius={2}

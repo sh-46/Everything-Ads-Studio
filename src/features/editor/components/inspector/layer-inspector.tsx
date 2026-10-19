@@ -16,10 +16,18 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { FONT_WEIGHTS, SYSTEM_FONT_FAMILIES } from "@/domain/fonts";
+import { useShallow } from "zustand/react/shallow";
+import { brandFontsFromAssets, type Asset } from "@/domain/asset";
+import { FONT_WEIGHTS, isSystemFont, SYSTEM_FONT_FAMILIES } from "@/domain/fonts";
 import type { GradientLayer, ImageLayer, Layer, ShapeLayer, TextLayer } from "@/domain/scene";
+
+function brandFamilyNames(assets: Asset[]): string[] {
+  return [...new Set(brandFontsFromAssets(assets).map((f) => f.family))].sort();
+}
 import type { LayerPatch, SceneAlignment } from "../../store/layer-ops";
 import { useEditorStore } from "../../store/editor-store";
+import { MediaSource } from "./media-source";
+import { MotionSection } from "./motion-section";
 import { ColorField, FieldRow, NumberField, RangeField, Section, SelectField } from "@/components/fields";
 
 type Update = (patch: LayerPatch, field: string) => void;
@@ -116,20 +124,36 @@ export function LayerInspector({ layer }: { layer: Layer }) {
       {layer.type === "image" && <ImageSection layer={layer} update={update} />}
       {layer.type === "gradient" && <GradientSection layer={layer} update={update} />}
       {layer.type === "shape" && <ShapeSection layer={layer} update={update} />}
+      {layer.type === "logo" && (
+        <MediaSource layer={layer}>
+          <p className="text-muted-foreground text-[11px]">Logos always keep their aspect ratio inside the frame.</p>
+        </MediaSource>
+      )}
 
-      <Section title="Motion">
-        <p className="text-muted-foreground text-xs leading-relaxed">
-          Motion presets and timing arrive in Phase 3. Layers already store a motion configuration, so nothing you build
-          now needs to be redone.
-        </p>
-      </Section>
+      <MotionSection layer={layer} />
     </div>
   );
 }
 
 function TextSection({ layer, update }: { layer: TextLayer; update: Update }) {
   const kit = useEditorStore((s) => s.kit);
-  const fontOptions = [...new Set([layer.fontFamily, ...SYSTEM_FONT_FAMILIES])].map((f) => ({ value: f, label: f }));
+  const fontStatus = useEditorStore((s) => s.fontStatus);
+  const brandFamilies = useEditorStore(useShallow((s) => brandFamilyNames(s.assets)));
+  const fontOptions = [
+    ...brandFamilies.map((f) => ({ value: f, label: `${f} · Brand${fontStatus[f] === "error" ? " (failed)" : ""}` })),
+    ...SYSTEM_FONT_FAMILIES.filter((f) => !brandFamilies.includes(f)).map((f) => ({ value: f, label: f })),
+  ];
+  const known = brandFamilies.includes(layer.fontFamily) || isSystemFont(layer.fontFamily);
+  if (!fontOptions.some((o) => o.value === layer.fontFamily)) {
+    fontOptions.unshift({ value: layer.fontFamily, label: `${layer.fontFamily} (missing)` });
+  }
+  const fontWarning = !known
+    ? "This font isn’t in the Brand Kit or system list, so a fallback font is shown. Upload it in the Brand Kit or pick another."
+    : fontStatus[layer.fontFamily] === "error"
+      ? "The font file failed to load; a fallback font is shown."
+      : fontStatus[layer.fontFamily] === "loading"
+        ? "Loading font…"
+        : null;
   const resetToBrand = () => {
     if (!layer.styleRef) return;
     const style = kit.typography[layer.styleRef];
@@ -162,6 +186,11 @@ function TextSection({ layer, update }: { layer: TextLayer; update: Update }) {
           options={fontOptions}
           onChange={(fontFamily) => update({ fontFamily }, "fontFamily")}
         />
+        {fontWarning && (
+          <p className="text-[11px] text-amber-700 dark:text-amber-400" role="status" data-testid="font-warning">
+            {fontWarning}
+          </p>
+        )}
         <FieldRow>
           <NumberField
             label="Size"
@@ -212,26 +241,8 @@ function TextSection({ layer, update }: { layer: TextLayer; update: Update }) {
 }
 
 function ImageSection({ layer, update }: { layer: ImageLayer; update: Update }) {
-  const assets = useEditorStore((s) => s.assets);
-  const asset = assets.find((a) => a.id === layer.assetId);
   return (
-    <Section title="Image">
-      <div className="flex items-center gap-2">
-        <div className="border-border bg-muted h-10 w-10 shrink-0 overflow-hidden rounded-md border">
-          {asset && (
-            // eslint-disable-next-line @next/next/no-img-element -- signed URL thumbnail
-            <img src={asset.url} alt="" className="h-full w-full object-cover" />
-          )}
-        </div>
-        <p className="text-muted-foreground min-w-0 flex-1 truncate text-xs">
-          {asset ? asset.originalFilename : "No photo. Pick one in the Assets tab."}
-        </p>
-        {layer.assetId && (
-          <Button variant="ghost" size="xs" onClick={() => update({ assetId: null }, "assetId")}>
-            Clear
-          </Button>
-        )}
-      </div>
+    <MediaSource layer={layer}>
       <SelectField
         label="Fit"
         value={layer.fit}
@@ -269,7 +280,7 @@ function ImageSection({ layer, update }: { layer: ImageLayer; update: Update }) 
         onChange={(focalY) => update({ focalY }, "focalY")}
         format={(v) => `${Math.round(v * 100)}%`}
       />
-    </Section>
+    </MediaSource>
   );
 }
 

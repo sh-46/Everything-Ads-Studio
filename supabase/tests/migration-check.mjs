@@ -135,6 +135,44 @@ check(
   (await fails(`insert into storage.objects (bucket_id, name) values ('assets', $1)`, [goodPath])) === null,
 );
 
+// --- 0002: brand assets
+const logoId = (
+  await one(
+    `insert into assets (workspace_id, brand_id, kind, storage_path, mime_type, byte_size, original_filename, display_name, metadata)
+     values ($1, $2, 'logo', $3, 'image/svg+xml', 10, 'logo.svg', 'Primary', '{"variant":"Primary"}') returning id`,
+    [wsA, brandA, `${wsA}/${brandA}/brand-kit/logo.svg`],
+  )
+).id;
+check("logo stored at brand level with display name and metadata", Boolean(logoId));
+check(
+  "logo cannot be attached to a project",
+  (await fails(
+    `insert into assets (workspace_id, brand_id, project_id, kind, storage_path, mime_type, byte_size, original_filename) values ($1,$2,$3,'logo',$4,'image/png',10,'l.png')`,
+    [wsA, brandA, projA, `${wsA}/${brandA}/brand-kit/l.png`],
+  )) !== null,
+);
+await db.query(
+  `update scenes set document = jsonb_build_object('layers', jsonb_build_array(jsonb_build_object('type','logo','assetId',$2::text))) where id = $1`,
+  [scenes[1].id, logoId],
+);
+const usage = (await db.query(`select * from public.asset_usage($1)`, [logoId])).rows;
+check("asset_usage finds scenes referencing a logo", usage.length === 1 && usage[0].scene_name === "Interior");
+const fontId = (
+  await one(
+    `insert into assets (workspace_id, brand_id, kind, storage_path, mime_type, byte_size, original_filename, metadata)
+     values ($1, $2, 'font', $3, 'font/woff2', 10, 'Brand-Bold.woff2', '{"family":"Brand Sans","weight":700}') returning id`,
+    [wsA, brandA, `${wsA}/${brandA}/brand-kit/f.woff2`],
+  )
+).id;
+await db.query(
+  `update scenes set document = jsonb_build_object('layers', jsonb_build_array(jsonb_build_object('type','text','fontFamily','Brand Sans'))) where id = $1`,
+  [scenes[0].id],
+);
+check(
+  "asset_usage finds text layers using a font family",
+  (await db.query(`select * from public.asset_usage($1)`, [fontId])).rows.length === 1,
+);
+
 // --- User B
 await as(B);
 const wsB = (await one(`select workspace_id from workspace_members`)).workspace_id;
@@ -146,6 +184,10 @@ check(
   (await one(`select (select count(*) from model_projects) + (select count(*) from scenes) as n`)).n == 0,
 );
 check("B cannot see A's assets", (await one(`select count(*)::int as n from assets`)).n === 0);
+check(
+  "B cannot see usage of A's assets",
+  (await db.query(`select * from public.asset_usage($1)`, [logoId])).rows.length === 0,
+);
 check("B cannot see A's storage objects", (await one(`select count(*)::int as n from storage.objects`)).n === 0);
 check(
   "B cannot see A's workspace",

@@ -1,7 +1,7 @@
 # Everything Ads Studio — Architecture
 
-Status: Milestone 1 (vertical slice) in progress. This document is the engineering
-plan; it is updated as milestones land.
+Status: Milestone 1, Phase 2.5 (photo workflow, brand fonts/logos) and Phase 3 (motion
+engine, Remotion preview) are implemented. Phase 4 (MP4 export) is next.
 
 ## 1. Architecture proposal
 
@@ -62,6 +62,10 @@ See `supabase/migrations/0001_init.sql` (authoritative). Summary:
 | project_versions  | immutable snapshots                     | written in Milestone 2                                                  |
 | export_jobs       | render queue                            | consumed by worker in Phase 4                                           |
 
+`0002_brand_assets.sql` adds `assets.display_name`, `assets.metadata` (logo variant; font family,
+weight, style), a check that logos/fonts are brand-level, and the `asset_usage(asset_id)` function
+(SECURITY INVOKER) used to warn before deleting files that scenes still use. No policy changes.
+
 Security changes made by the migration (explained here as required):
 
 - RLS **enabled** on every public table; no policies for `anon`.
@@ -112,29 +116,62 @@ docs/                             this file
 
 ## 4. Packages
 
-Installed now (Milestone 1): `next`, `react`, `@supabase/supabase-js`, `@supabase/ssr`,
-`zustand`, `zod`, `konva`, `react-konva`, `lucide-react`, shadcn/ui (`radix-ui`,
-`class-variance-authority`, `cn`, `tw-animate-css`), dev: `vitest`, `prettier`,
-`prettier-plugin-tailwindcss`, ESLint (Next config), Tailwind 4.
+Installed: `next`, `react`, `@supabase/supabase-js`, `@supabase/ssr`, `zustand`, `zod`, `konva`,
+`react-konva`, `lucide-react`, shadcn/ui (`radix-ui`, `class-variance-authority`, `cn`,
+`tw-animate-css`), `remotion` + `@remotion/player` (pinned to the same exact version, as Remotion
+requires); dev: `vitest`, `prettier`, `prettier-plugin-tailwindcss`, `@electric-sql/pglite` (SQL/RLS
+tests), ESLint, Tailwind 4.
 
-Deferred until the phase that needs them: `remotion`, `@remotion/player` (Phase 3),
-`@remotion/renderer`, `@remotion/bundler`, `jszip`/`archiver` (Phase 4),
-`@playwright/test` (after Milestone 1, once a test Supabase project exists).
+Deferred: `@remotion/renderer`, `@remotion/bundler`, `jszip`/`archiver` (Phase 4), `@playwright/test`
+(once a test Supabase project exists; browser checks currently run as ad-hoc scripts).
+
+**Remotion licence:** Remotion is free for individuals and companies of up to 3 people; larger
+companies need a company licence. `acknowledgeRemotionLicense` is deliberately **not** set — that is a
+decision for the account owner.
 
 ## 5. Milestones
 
-1. **Vertical slice** — auth, personal workspace, brand + kit, project CRUD, photo upload,
-   scene editor (image/text/gradient/shape layers, drag/resize/rotate, inspector,
-   undo/redo, layout presets, keyboard shortcuts, zoom/fit), autosave with conflict
-   detection, reopen.
-2. **Editor completeness** — logo layers, brand font upload (FontFace), project-level
-   kit overrides, project_versions snapshots, alignment tools, multi-select, asset
-   library management, workspace invites.
-3. **Motion** — `MotionConfig` UI, pure `evaluateMotion(layer, frame, fps)` shared by
-   Konva preview scrubbing and Remotion; Remotion Player scene + full-experience preview.
-4. **Export** — render worker (Remotion renderer) consuming `export_jobs`, MP4 per scene,
-   CTA PNG/JPG, ZIP batch, job status UI, Konva-vs-Remotion visual diff tests.
+1. **Vertical slice** — done.
+2. **Phase 2.5 — photo workflow & Brand Kit assets** — done: project photo library with batch upload,
+   Add Image (upload / library / empty frame), canvas drop, replace/remove keeping layout and motion,
+   Scenes Overview photo slots, scene duplication, brand fonts (FontFace) and logo library, safe delete
+   with usage check (`asset_usage`).
+3. **Phase 3 — motion** — done: `MotionConfig` (entrance, continuous, exit, two-image transition,
+   sequencing, hold), pure `motion-engine.ts`, Motion inspector, Remotion Player scene preview and
+   full-experience mobile preview (Outro + CTA stacked).
+4. **Export** — render worker (Remotion renderer) registering the same `SceneComposition`, consuming
+   `export_jobs`; MP4 per scene, CTA PNG/JPG, ZIP batch, job status UI, pixel-diff tests.
 5. **Copy Assistant** — OEM URL retrieval, cited suggestions, shortening, human review gate.
+6. Not yet scheduled: multi-select, snapping, project-level kit overrides, `project_versions`
+   snapshots, workspace invites, periodic signed-URL refresh.
+
+### Motion engine
+
+- Stored per layer in `layer.motion` (Zod `motionConfigSchema`, every field defaulted so older
+  documents parse). No separate animation format.
+- `computeSceneTimings(layers, durationMs)` resolves start/entrance/exit/continuous windows.
+  "Previous" = the nearest visible layer below. Hold 0 = exit finishes at scene end.
+- `evaluateMotion(layer, timing, tMs)` → opacity, layer translate/scale, and image content
+  translate/scale (Ken Burns, transitions). Pure and frame-deterministic (`frameToMs`).
+- The Konva canvas shows the static, fully-entered layout; animation is rendered only by Remotion
+  (`features/preview`), which is what the Phase 4 renderer will reuse.
+- Brand Kit `motionDefaults` are copied onto layers at creation; later kit edits don't touch them.
+
+### Render consistency (Konva ↔ Remotion)
+
+Pinned by `features/preview/layer-style.test.ts`: image placement (`fitImageRect` vs
+`visibleImageRegion`), CSS gradient angle semantics vs Konva gradient points, identical font stack
+(`fontStack`) and type metrics, rotation about the top-left, corner-radius clamping. Text line
+breaking can still differ slightly between canvas and DOM; Phase 4 adds pixel-diff checks.
+
+### Assets & fonts
+
+- Photos are project-scoped (`{ws}/{brand}/{project}/…`); logos and fonts are brand-scoped
+  (`{ws}/{brand}/brand-kit/…`). Layers reference asset ids; replacing a file keeps the id.
+- Uploads are validated in the browser (type, size, magic bytes, SVG safety) and again on the server
+  (Demo route; production re-checks SVG/fonts after upload).
+- Fonts load via `FontFace` (`use-brand-fonts.ts`); the canvas re-measures text once loaded. Family
+  metadata is read from the font's `name`/`OS/2` tables (TTF/OTF/WOFF) or the file name (WOFF2).
 
 ## 6. Technical risks & dependencies
 
@@ -142,12 +179,13 @@ Deferred until the phase that needs them: `remotion`, `@remotion/player` (Phase 
   baseline) differs from DOM text. Mitigation: shared geometry module, shared font
   loading, and screenshot-diff tests of identical documents in Phase 4. Fallback:
   render text in the Remotion composition with the same canvas text routine.
-- **Fonts.** Uploaded brand fonts must be loaded (FontFace) before canvas draw and in
-  the render worker; license restrictions may apply per OEM.
+- **Fonts.** Brand fonts load via FontFace in the editor and preview; the Phase 4 worker must load
+  the same files before rendering. OEM font licences may restrict web embedding.
 - **Rendering infrastructure.** Remotion rendering needs Chromium + ffmpeg; it cannot run
   inside a Vercel function for long renders. Needs a worker host (Fly/Render/ECS or
   Remotion Lambda) and a Remotion company license if the org exceeds the free tier.
-- **Signed URL expiry** during long editing sessions — editor refreshes URLs periodically.
+- **Signed URL expiry** — signed URLs last 6 h; automatic refresh is not implemented yet, so a
+  very long editing session needs a page reload.
 - **Large uploads** go browser → Storage directly (bypasses Vercel body limits); image
   dimensions are read client-side.
 - **Next.js 16** renamed middleware to `proxy.ts`; route params are async.

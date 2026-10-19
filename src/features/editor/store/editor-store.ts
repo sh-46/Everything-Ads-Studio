@@ -2,6 +2,7 @@
 
 import { create } from "zustand";
 import type { Asset } from "@/domain/asset";
+import type { UploadTarget } from "@/features/assets/upload";
 import type { BrandKit } from "@/domain/brand-kit";
 import { applyLayoutPreset, type LayoutPresetId } from "@/domain/layout-presets";
 import type { Layer, Scene, SceneDocument } from "@/domain/scene";
@@ -15,6 +16,9 @@ export interface EditorScene extends Scene {
 }
 
 export type ZoomMode = "fit" | number;
+
+/** "edit" shows the Konva canvas; "preview" plays the scene with Remotion. */
+export type CanvasMode = "edit" | "preview";
 
 export interface SaveIssue {
   error?: string;
@@ -35,8 +39,23 @@ interface EditorState {
   savingSceneIds: string[];
   saveIssues: Record<string, SaveIssue>;
   lastSavedAt: number | null;
+  canvasMode: CanvasMode;
+  /** Where uploads from the editor go (project photos, brand logos). */
+  uploadTarget: UploadTarget | null;
+  /** Bumped to ask the preview player to restart (e.g. from the Motion inspector). */
+  previewNonce: number;
+  /** Brand font load state by family, and a counter that changes as fonts finish loading. */
+  fontStatus: Record<string, "loading" | "loaded" | "error">;
+  fontsVersion: number;
 
-  init(input: { projectId: string; brandId: string; kit: BrandKit; assets: Asset[]; scenes: Scene[] }): void;
+  init(input: {
+    projectId: string;
+    brandId: string;
+    kit: BrandKit;
+    assets: Asset[];
+    scenes: Scene[];
+    uploadTarget: UploadTarget;
+  }): void;
   setActiveScene(sceneId: string): void;
   selectLayer(layerId: string | null): void;
   setZoom(zoom: ZoomMode): void;
@@ -61,7 +80,15 @@ interface EditorState {
   redo(): void;
 
   addAsset(asset: Asset): void;
+  /** Replace an asset's record (new file or metadata) keeping its id. */
+  updateAsset(asset: Asset): void;
+  removeAsset(assetId: string): void;
   setAssets(assets: Asset[]): void;
+  /** Insert a scene created on the server (e.g. a duplicate) after its source. */
+  insertScene(scene: Scene, afterSceneId: string): void;
+  setCanvasMode(mode: CanvasMode): void;
+  playPreview(): void;
+  setFontState(status: Record<string, "loading" | "loaded" | "error">, version: number): void;
 
   markSaving(sceneId: string, saving: boolean): void;
   markSaved(sceneId: string, savedVersion: number, revision: number, updatedAt: string): void;
@@ -90,8 +117,13 @@ export const useEditorStore = create<EditorState>()((set, get) => ({
   savingSceneIds: [],
   saveIssues: {},
   lastSavedAt: null,
+  canvasMode: "edit",
+  uploadTarget: null,
+  previewNonce: 0,
+  fontStatus: {},
+  fontsVersion: 0,
 
-  init({ projectId, brandId, kit, assets, scenes }) {
+  init({ projectId, brandId, kit, assets, scenes, uploadTarget }) {
     const ordered = [...scenes].sort((a, b) => a.position - b.position);
     set({
       projectId,
@@ -107,6 +139,8 @@ export const useEditorStore = create<EditorState>()((set, get) => ({
       savingSceneIds: [],
       saveIssues: {},
       lastSavedAt: null,
+      canvasMode: "edit",
+      uploadTarget,
     });
   },
 
@@ -215,6 +249,40 @@ export const useEditorStore = create<EditorState>()((set, get) => ({
 
   addAsset(asset) {
     set((state) => ({ assets: [asset, ...state.assets.filter((a) => a.id !== asset.id)] }));
+  },
+
+  updateAsset(asset) {
+    set((state) => ({ assets: state.assets.map((a) => (a.id === asset.id ? asset : a)) }));
+  },
+
+  removeAsset(assetId) {
+    set((state) => ({ assets: state.assets.filter((a) => a.id !== assetId) }));
+  },
+
+  insertScene(scene, afterSceneId) {
+    set((state) => {
+      const order = [...state.sceneOrder];
+      const index = order.indexOf(afterSceneId);
+      order.splice(index === -1 ? order.length : index + 1, 0, scene.id);
+      return {
+        scenes: { ...state.scenes, [scene.id]: { ...scene, editVersion: 0, savedVersion: 0 } },
+        sceneOrder: order,
+        activeSceneId: scene.id,
+        selectedLayerId: null,
+      };
+    });
+  },
+
+  setCanvasMode(mode) {
+    set({ canvasMode: mode });
+  },
+
+  playPreview() {
+    set((state) => ({ canvasMode: "preview", previewNonce: state.previewNonce + 1 }));
+  },
+
+  setFontState(fontStatus, fontsVersion) {
+    set({ fontStatus, fontsVersion });
   },
 
   setAssets(assets) {
