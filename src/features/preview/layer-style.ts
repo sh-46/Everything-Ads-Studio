@@ -34,6 +34,11 @@ export function contentTransform(m: MotionState): string {
   return parts.join(" ") || "none";
 }
 
+/** Content scale origin: the motion focus point in frame pixels, or the frame center. */
+export function contentOriginCss(m: MotionState): string {
+  return m.contentOrigin ? `${m.contentOrigin.x}px ${m.contentOrigin.y}px` : "50% 50%";
+}
+
 /** CSS equivalent of the Konva gradient fill (same angle semantics and radius). */
 export function gradientCss(fill: GradientFill): string {
   const stops = [...fill.stops]

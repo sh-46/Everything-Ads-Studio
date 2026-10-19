@@ -3,7 +3,15 @@ import { Img } from "remotion";
 import type { Asset } from "@/domain/asset";
 import { computeSceneTimings, evaluateMotion, IDENTITY_MOTION } from "@/domain/motion-engine";
 import type { ImageLayer, Layer, LogoLayer, SceneDocument } from "@/domain/scene";
-import { contentTransform, cornerRadius, gradientCss, imageRect, layerTransform, textStyle } from "./layer-style";
+import {
+  contentOriginCss,
+  contentTransform,
+  cornerRadius,
+  gradientCss,
+  imageRect,
+  layerTransform,
+  textStyle,
+} from "./layer-style";
 
 /**
  * Renders a scene document at time `timeMs` as positioned DOM in scene pixels. Used by
@@ -38,7 +46,9 @@ export function SceneLayers({
     >
       {doc.layers.map((layer) => {
         if (!layer.visible) return null;
-        const m = timeMs === null ? IDENTITY_MOTION : evaluateMotion(layer, timings.get(layer.id), timeMs);
+        const asset = "assetId" in layer && layer.assetId ? assetsById.get(layer.assetId) : undefined;
+        const media = asset?.width && asset.height ? { width: asset.width, height: asset.height } : null;
+        const m = timeMs === null ? IDENTITY_MOTION : evaluateMotion(layer, timings.get(layer.id), timeMs, media);
         const opacity = layer.opacity * m.opacity;
         if (opacity <= 0) return null;
         return (
@@ -123,7 +133,15 @@ function Media({
     isLogo ? 1 : layer.zoom,
   );
   return (
-    <div style={{ position: "absolute", inset: 0, transformOrigin: "50% 50%", transform: contentTransform(motion) }}>
+    <div
+      style={{
+        position: "absolute",
+        inset: 0,
+        // Focus point (frame px) when set; otherwise the frame center, as before.
+        transformOrigin: contentOriginCss(motion),
+        transform: contentTransform(motion),
+      }}
+    >
       <Img
         src={asset.url}
         alt=""

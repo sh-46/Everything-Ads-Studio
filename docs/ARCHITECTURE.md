@@ -165,6 +165,11 @@ decision for the account owner.
 - Easing: Linear, Ease In / Ease Out / Ease In Out (cubic), Spring (damped, ζ 0.65, ~7% overshoot; opacity
   is clamped, movement may overshoot). Legacy `easeOutCubic` / `easeInOutCubic` map to the identical curves.
 - Camera motion (`continuous`) has its own easing; `cameraCoverage()` samples it to detect blank edges.
+- Motion focus point: `ImageLayer.motionFocus` ({x, y} in 0–1 of the original image, or null). The engine maps
+  it through the static framing (`fitImageRect`: fit, static zoom, static pan) to frame pixels and uses it as
+  the content scale origin (`MotionState.contentOrigin`); zoom keeps that point fixed on screen. Pans scale
+  about it by the minimum that keeps the frame covered. null = frame-center origin with the original pan math,
+  so older projects render identically. The Konva crosshair overlay exists only in the editor.
 - Photo 1 → Photo 2: `photoPair()` finds a photo stacked over the main photo in (nearly) the same frame; the
   transition is stored on Photo 2 (`motion.transition` + its start time).
 - Motion presets (`motion-presets.ts`) copy timing, entrance, camera motion and exit onto a layer — never the

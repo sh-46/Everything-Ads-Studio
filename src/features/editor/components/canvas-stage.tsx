@@ -4,12 +4,13 @@ import type Konva from "konva";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Group, Layer as KonvaLayer, Rect, Stage, Transformer } from "react-konva";
 import { fitScale } from "@/domain/geometry";
-import type { Layer } from "@/domain/scene";
+import type { ImageLayer, Layer } from "@/domain/scene";
 import { UploadQueue } from "@/features/assets/components/upload-widgets";
 import { useUploader } from "@/features/assets/components/use-uploader";
 import type { UploadTarget } from "@/features/assets/upload";
 import { useInsertMedia } from "../hooks/use-insert-media";
 import { useActiveScene, useEditorStore } from "../store/editor-store";
+import { FocusOverlay } from "./layers/focus-overlay";
 import { GradientNode, ImageNode, LogoNode, ShapeNode, TextNode } from "./layers/layer-nodes";
 
 const PADDING = 48;
@@ -67,7 +68,15 @@ export default function CanvasStage() {
   const [dropActive, setDropActive] = useState(false);
   const doc = scene?.document;
   const selected = doc?.layers.find((l) => l.id === selectedLayerId);
-  const canTransform = Boolean(selected && selected.visible && !selected.locked);
+  const focusEditLayerId = useEditorStore((s) => s.focusEditLayerId);
+  const setFocusEdit = useEditorStore((s) => s.setFocusEdit);
+  const assets = useEditorStore((s) => s.assets);
+  const focusLayer = doc?.layers.find((l) => l.id === focusEditLayerId && l.type === "image") as ImageLayer | undefined;
+  const focusAsset = focusLayer?.assetId ? assets.find((a) => a.id === focusLayer.assetId) : undefined;
+  const focusMedia =
+    focusAsset?.width && focusAsset.height ? { width: focusAsset.width, height: focusAsset.height } : null;
+  // No resize handles while placing a focus point.
+  const canTransform = Boolean(selected && selected.visible && !selected.locked && !focusLayer);
 
   useEffect(() => {
     const transformer = transformerRef.current;
@@ -75,7 +84,7 @@ export default function CanvasStage() {
     const node = canTransform && selectedLayerId ? nodeRefs.current.get(selectedLayerId) : undefined;
     transformer.nodes(node ? [node] : []);
     transformer.getLayer()?.batchDraw();
-  }, [canTransform, selectedLayerId, doc]);
+  }, [canTransform, selectedLayerId, doc, focusLayer]);
 
   if (!scene || !doc) return <div ref={viewportRef} className="h-full w-full" />;
 
@@ -131,6 +140,22 @@ export default function CanvasStage() {
         );
       }}
     >
+      {focusLayer && (
+        <div
+          className="bg-background/95 absolute top-3 left-1/2 z-10 flex -translate-x-1/2 items-center gap-3 rounded-full border px-4 py-1.5 text-xs shadow-md"
+          role="status"
+          data-testid="focus-edit-banner"
+        >
+          <span>Click or drag on the photo to place the motion focus point.</span>
+          <button
+            type="button"
+            className="bg-primary text-primary-foreground rounded-full px-3 py-0.5 font-medium"
+            onClick={() => setFocusEdit(null)}
+          >
+            Done (Esc)
+          </button>
+        </div>
+      )}
       {uploader.items.length > 0 && (
         <div className="absolute top-2 left-2 z-10 w-64">
           <UploadQueue items={uploader.items} onDismiss={uploader.dismiss} />
@@ -169,7 +194,7 @@ export default function CanvasStage() {
                     opacity={layer.opacity}
                     visible={layer.visible}
                     listening={!layer.locked}
-                    draggable={!layer.locked}
+                    draggable={!layer.locked && layer.id !== focusEditLayerId}
                     onMouseDown={(e) => {
                       e.cancelBubble = true;
                       selectLayer(layer.id);
@@ -185,6 +210,18 @@ export default function CanvasStage() {
                   </Group>
                 ))}
               </Group>
+              {focusLayer && (
+                <FocusOverlay
+                  layer={focusLayer}
+                  media={focusMedia}
+                  scale={scale}
+                  onCommit={(motionFocus) =>
+                    updateLayer(focusLayer.id, {
+                      motionFocus: { x: Number(motionFocus.x.toFixed(4)), y: Number(motionFocus.y.toFixed(4)) },
+                    })
+                  }
+                />
+              )}
             </Group>
             <Transformer
               ref={transformerRef}

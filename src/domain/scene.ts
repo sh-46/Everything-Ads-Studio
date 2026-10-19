@@ -75,6 +75,15 @@ export const imageLayerSchema = baseLayerSchema.extend({
   focalY: z.number().min(0).max(1).default(0.5),
   /** Additional zoom inside the frame (1 = fit exactly). */
   zoom: z.number().min(1).max(5).default(1),
+  /**
+   * Motion focus point (anchor) for camera zoom/pan, normalized to the original image
+   * (0–1 of its width/height) so it stays on the same content when the frame or crop
+   * changes. null = the frame center (behaviour before focus points existed).
+   */
+  motionFocus: z
+    .object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) })
+    .nullable()
+    .default(null),
 });
 
 export const gradientLayerSchema = baseLayerSchema.extend({
@@ -140,18 +149,20 @@ export function newLayerId(): string {
   return crypto.randomUUID();
 }
 
-type LayerInput<T extends Layer> = Omit<T, "id" | "motion" | "rotation" | "opacity" | "visible" | "locked"> &
-  Partial<Pick<T, "id" | "motion" | "rotation" | "opacity" | "visible" | "locked">>;
+type Defaulted = "id" | "motion" | "rotation" | "opacity" | "visible" | "locked" | "motionFocus";
+type LayerInput<T extends Layer> = Omit<T, Extract<Defaulted, keyof T>> & Partial<Pick<T, Extract<Defaulted, keyof T>>>;
 
 /** Fills common defaults so presets and the editor build layers the same way. */
 export function makeLayer<T extends Layer>(input: LayerInput<T>): T {
+  const raw = input as unknown as { type: Layer["type"]; id?: string };
   return {
     rotation: 0,
     opacity: 1,
     visible: true,
     locked: false,
     motion: defaultMotion(),
+    ...(raw.type === "image" ? { motionFocus: null } : {}),
     ...input,
-    id: input.id ?? newLayerId(),
+    id: raw.id ?? newLayerId(),
   } as T;
 }

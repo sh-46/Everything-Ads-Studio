@@ -84,6 +84,10 @@ http://localhost:3001/projects/d0000000-0000-4000-8000-0000000001a1.
      Ease), Spring) with a curve preview.
    - **Camera motion** (photos/logos): animated zoom or pan with its own duration and easing, separate from the
      static **Image framing** above. A warning (with **Fix**) appears if the motion would show blank edges.
+   - **Motion focus point** (under Camera motion): **Edit focus point** shows a crosshair on the photo — click or
+     drag it onto the vehicle, then **Done** (Esc). Zoom heads toward that point and pans scale around it; Focus
+     X/Y set it precisely; **Reset to center** restores the default. The point is stored on the photo itself, so
+     it follows the car when you crop, resize or change layout.
    - **Photo transition** (on either photo of a Photo 1 → Photo 2 pair): Cut, Crossfade, Slide, Zoom; start
      time, duration, easing, direction. With one photo, **Add second photo…** sets up the pair.
    - **Exit** and **Hold**; **Timing overview** shows when each phase runs and warns if it overruns the scene.

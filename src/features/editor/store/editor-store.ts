@@ -43,6 +43,8 @@ interface EditorState {
   saveIssues: Record<string, SaveIssue>;
   lastSavedAt: number | null;
   canvasMode: CanvasMode;
+  /** Image layer whose motion focus point is being placed on the canvas (crosshair). */
+  focusEditLayerId: string | null;
   /** Where uploads from the editor go (project photos, brand logos). */
   uploadTarget: UploadTarget | null;
   /** Ask the preview player to (re)start playback from `fromMs` (bumping `nonce`). */
@@ -93,6 +95,7 @@ interface EditorState {
   /** Insert a scene created on the server (e.g. a duplicate) after its source. */
   insertScene(scene: Scene, afterSceneId: string): void;
   setCanvasMode(mode: CanvasMode): void;
+  setFocusEdit(layerId: string | null): void;
   /** Switch to preview and play from `fromMs` (default: scene start). */
   playPreview(fromMs?: number): void;
   /** Switch to preview and replay the given layer's animation from just before it starts. */
@@ -130,6 +133,7 @@ export const useEditorStore = create<EditorState>()((set, get) => ({
   saveIssues: {},
   lastSavedAt: null,
   canvasMode: "edit",
+  focusEditLayerId: null,
   uploadTarget: null,
   previewRequest: { nonce: 0, fromMs: 0 },
   motionPresets: [],
@@ -153,17 +157,22 @@ export const useEditorStore = create<EditorState>()((set, get) => ({
       saveIssues: {},
       lastSavedAt: null,
       canvasMode: "edit",
+      focusEditLayerId: null,
       uploadTarget,
       motionPresets,
     });
   },
 
   setActiveScene(sceneId) {
-    if (get().scenes[sceneId]) set({ activeSceneId: sceneId, selectedLayerId: null });
+    if (get().scenes[sceneId]) set({ activeSceneId: sceneId, selectedLayerId: null, focusEditLayerId: null });
   },
 
   selectLayer(layerId) {
-    set({ selectedLayerId: layerId });
+    // Focus editing belongs to one layer; selecting anything else finishes it.
+    set((state) => ({
+      selectedLayerId: layerId,
+      focusEditLayerId: state.focusEditLayerId === layerId ? state.focusEditLayerId : null,
+    }));
   },
 
   setZoom(zoom) {
@@ -288,11 +297,19 @@ export const useEditorStore = create<EditorState>()((set, get) => ({
   },
 
   setCanvasMode(mode) {
-    set({ canvasMode: mode });
+    set({ canvasMode: mode, focusEditLayerId: mode === "edit" ? get().focusEditLayerId : null });
+  },
+
+  setFocusEdit(layerId) {
+    set({ focusEditLayerId: layerId, canvasMode: layerId ? "edit" : get().canvasMode });
   },
 
   playPreview(fromMs = 0) {
-    set((state) => ({ canvasMode: "preview", previewRequest: { nonce: state.previewRequest.nonce + 1, fromMs } }));
+    set((state) => ({
+      canvasMode: "preview",
+      focusEditLayerId: null,
+      previewRequest: { nonce: state.previewRequest.nonce + 1, fromMs },
+    }));
   },
 
   playLayer(layerId) {

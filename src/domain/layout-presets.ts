@@ -68,6 +68,7 @@ function imageLayer(
     focalX: prev.focalX,
     focalY: prev.focalY,
     zoom: prev.zoom,
+    motionFocus: prev.motionFocus,
     opacity: prev.opacity,
     visible: prev.visible,
     motion: prev.motion,

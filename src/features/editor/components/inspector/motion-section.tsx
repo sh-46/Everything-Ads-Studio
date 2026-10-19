@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowRight, Play } from "lucide-react";
+import { ArrowRight, Crosshair, Play } from "lucide-react";
 import { useMemo, useState } from "react";
 import { cn } from "cn";
 import { FieldRow, NumberField, Section, SelectField } from "@/components/fields";
@@ -22,7 +22,14 @@ import {
   TRANSITION_PRESETS,
   type MotionConfig,
 } from "@/domain/motion";
-import { cameraCoverage, computeSceneTimings, supportsContinuous, type LayerTiming } from "@/domain/motion-engine";
+import {
+  cameraCoverage,
+  computeSceneTimings,
+  effectiveFocus,
+  focusVisibility,
+  supportsContinuous,
+  type LayerTiming,
+} from "@/domain/motion-engine";
 import type { ImageLayer, Layer } from "@/domain/scene";
 import { assignScenePhoto, photoPair } from "@/domain/scene-photos";
 import { AssetPickerDialog, AssetThumb } from "@/features/assets/components/asset-picker-dialog";
@@ -312,13 +319,10 @@ function CameraMotion({
   const isZoom = c.preset === "slowZoomIn" || c.preset === "slowZoomOut";
   const media =
     layer.type === "image" || layer.type === "logo" ? assets.find((a) => a.id === layer.assetId) : undefined;
+  const mediaSize = media?.width && media.height ? { width: media.width, height: media.height } : null;
   const coverage =
     layer.type === "image" && c.preset !== "none"
-      ? cameraCoverage(
-          layer,
-          media?.width && media.height ? { width: media.width, height: media.height } : null,
-          timing,
-        )
+      ? cameraCoverage(layer, mediaSize, timing)
       : { covered: true, minScaleNeeded: 1 };
   const containFit = layer.type === "image" && layer.fit === "contain" && c.preset !== "none";
 
@@ -418,9 +422,104 @@ function CameraMotion({
               </Button>
             </div>
           )}
+          {layer.type === "image" && <FocusPointControls layer={layer} media={mediaSize} timing={timing} />}
         </>
       )}
     </MotionGroup>
+  );
+}
+
+/**
+ * Motion focus point (anchor): where the camera zooms toward / pans around. Stored
+ * relative to the photo, so it follows the content when the crop or frame changes.
+ */
+function FocusPointControls({
+  layer,
+  media,
+  timing,
+}: {
+  layer: ImageLayer;
+  media: { width: number; height: number } | null;
+  timing: LayerTiming | undefined;
+}) {
+  const updateLayer = useEditorStore((s) => s.updateLayer);
+  const editingId = useEditorStore((s) => s.focusEditLayerId);
+  const setFocusEdit = useEditorStore((s) => s.setFocusEdit);
+  const editing = editingId === layer.id;
+  const focus = effectiveFocus(layer, media);
+  const custom = layer.motionFocus !== null;
+  const visibility = focusVisibility(layer, media, timing);
+  const setAxis = (axis: "x" | "y", percent: number) =>
+    updateLayer(
+      layer.id,
+      { motionFocus: { ...focus, [axis]: Math.min(1, Math.max(0, percent / 100)) } },
+      `${layer.id}:motionFocus.${axis}`,
+    );
+
+  return (
+    <div className="border-border space-y-2 rounded-md border p-2" data-testid="focus-point">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-[11px] font-medium">Motion focus point</span>
+        <span className="text-muted-foreground text-[11px]" data-testid="focus-mode">
+          {custom ? "Custom" : "Frame center (default)"}
+        </span>
+      </div>
+      <div className="flex gap-1.5">
+        <Button
+          variant={editing ? "default" : "outline"}
+          size="xs"
+          className="flex-1"
+          onClick={() => setFocusEdit(editing ? null : layer.id)}
+          data-testid="focus-edit"
+        >
+          <Crosshair /> {editing ? "Done" : "Edit focus point"}
+        </Button>
+        <Button
+          variant="ghost"
+          size="xs"
+          disabled={!custom}
+          onClick={() => updateLayer(layer.id, { motionFocus: null })}
+          data-testid="focus-reset"
+        >
+          Reset to center
+        </Button>
+      </div>
+      <FieldRow>
+        <NumberField
+          label="X"
+          suffix="%"
+          min={0}
+          max={100}
+          precision={1}
+          value={Number((focus.x * 100).toFixed(1))}
+          onChange={(v) => setAxis("x", v)}
+        />
+        <NumberField
+          label="Y"
+          suffix="%"
+          min={0}
+          max={100}
+          precision={1}
+          value={Number((focus.y * 100).toFixed(1))}
+          onChange={(v) => setAxis("y", v)}
+        />
+      </FieldRow>
+      {visibility.outsideFrame && (
+        <Hint tone="warn">The focus point is on a part of the photo that’s cropped out of the frame.</Hint>
+      )}
+      {visibility.leavesFrame && (
+        <Hint tone="warn">
+          The focus point moves out of the frame during this motion. Shorten the travel or move the point.
+        </Hint>
+      )}
+      <Hint>
+        {editing
+          ? "Click or drag on the photo, then press Done (or Esc)."
+          : custom
+            ? "Measured on the photo itself, so it stays on the subject when you crop or resize. It’s kept when you replace the photo — reset it if the new subject is elsewhere."
+            : "Zoom and pan are centred on the frame. Place the point on the vehicle to zoom toward it."}
+      </Hint>
+    </div>
   );
 }
 

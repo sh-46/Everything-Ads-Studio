@@ -54,6 +54,11 @@ export function useKeyboardShortcuts() {
       if (isTyping(e.target)) return;
 
       const layerId = store.selectedLayerId;
+      if (e.key === "Escape" && store.focusEditLayerId) {
+        // Esc finishes focus-point editing first, keeping the layer selected.
+        store.setFocusEdit(null);
+        return;
+      }
       if (e.key === "Escape") {
         // Escape closing a menu, dialog or dropdown shouldn't also deselect the layer.
         const overlayOpen = document.querySelector("[role=menu], [role=dialog], [role=listbox]");

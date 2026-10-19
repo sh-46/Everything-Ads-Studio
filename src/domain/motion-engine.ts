@@ -1,4 +1,4 @@
-import { fitImageRect, type Size } from "./geometry";
+import { fitImageRect, type Point, type Rect, type Size } from "./geometry";
 import { hasEntrance, type Direction, type Easing, type MotionConfig } from "./motion";
 import type { ImageLayer, Layer, LogoLayer } from "./scene";
 
@@ -123,10 +123,12 @@ export interface MotionState {
   translateY: number;
   /** Layer scale around its center. */
   scale: number;
-  /** Image content transform inside its (clipped) frame, around the frame center. */
+  /** Image content transform inside its (clipped) frame, scaled about `contentOrigin`. */
   contentScale: number;
   contentTranslateX: number;
   contentTranslateY: number;
+  /** Scale origin in frame pixels; null = the frame center (CSS `50% 50%`). */
+  contentOrigin: Point | null;
 }
 
 export const IDENTITY_MOTION: MotionState = {
@@ -137,6 +139,7 @@ export const IDENTITY_MOTION: MotionState = {
   contentScale: 1,
   contentTranslateX: 0,
   contentTranslateY: 0,
+  contentOrigin: null,
 };
 
 function directionVector(direction: Direction): [number, number] {
@@ -185,6 +188,49 @@ function applyEntrance(state: MotionState, m: MotionConfig, timing: LayerTiming,
   }
 }
 
+/** Where the photo sits in its frame (static framing: fit, static zoom, static pan). */
+export function imageRectInFrame(layer: ImageLayer, media: Size | null | undefined): Rect {
+  const frame = { width: layer.width, height: layer.height };
+  return fitImageRect(media ?? frame, frame, layer.fit, layer.focalX, layer.focalY, layer.zoom);
+}
+
+/**
+ * The motion focus point in frame pixels, or null when none is set (frame center).
+ * The point is stored relative to the image, so crop/fit/zoom changes move it with
+ * the content it marks.
+ */
+export function focusInFrame(layer: Layer, media: Size | null | undefined): Point | null {
+  if (layer.type !== "image" || !layer.motionFocus) return null;
+  const rect = imageRectInFrame(layer, media);
+  return { x: rect.x + layer.motionFocus.x * rect.width, y: rect.y + layer.motionFocus.y * rect.height };
+}
+
+/** Inverse of `focusInFrame`: a frame point → normalized image coordinates (clamped). */
+export function focusFromFramePoint(layer: ImageLayer, media: Size | null | undefined, point: Point): Point {
+  const rect = imageRectInFrame(layer, media);
+  const clamp = (v: number) => Math.min(1, Math.max(0, v));
+  return { x: clamp((point.x - rect.x) / rect.width), y: clamp((point.y - rect.y) / rect.height) };
+}
+
+/** Effective focus in image coordinates (the frame center when none is set). */
+export function effectiveFocus(layer: ImageLayer, media: Size | null | undefined): Point {
+  return layer.motionFocus ?? focusFromFramePoint(layer, media, { x: layer.width / 2, y: layer.height / 2 });
+}
+
+/**
+ * Smallest scale about `origin` that keeps `rect` covering the frame while the content
+ * is translated by up to ±`travel`/2 on one axis.
+ */
+function coverScaleAbout(rect: Rect, frame: Size, origin: Point, travelX: number, travelY: number): number {
+  const need = (num: number, den: number) => (num <= 0 ? 1 : den <= 1e-6 ? 10 : num / den);
+  return Math.max(
+    need(origin.x + travelX / 2, origin.x - rect.x),
+    need(frame.width - origin.x + travelX / 2, rect.x + rect.width - origin.x),
+    need(origin.y + travelY / 2, origin.y - rect.y),
+    need(frame.height - origin.y + travelY / 2, rect.y + rect.height - origin.y),
+  );
+}
+
 function applyTransition(state: MotionState, m: MotionConfig, timing: LayerTiming, t: number, layer: Layer) {
   const { preset, durationMs, easing, direction } = m.transition;
   const p = progress(t, timing.start, durationMs, easing);
@@ -201,6 +247,7 @@ function applyTransition(state: MotionState, m: MotionConfig, timing: LayerTimin
       return;
     }
     case "zoom":
+      // Settles onto Photo 2's focus point when it has one (origin set by applyContinuous or below).
       state.contentScale *= 1 + 0.25 * (1 - p);
       state.opacity *= Math.min(1, Math.max(0, p));
       return;
@@ -210,20 +257,39 @@ function applyTransition(state: MotionState, m: MotionConfig, timing: LayerTimin
   }
 }
 
-function applyContinuous(state: MotionState, m: MotionConfig, timing: LayerTiming, t: number, layer: Layer) {
+function applyContinuous(
+  state: MotionState,
+  m: MotionConfig,
+  timing: LayerTiming,
+  t: number,
+  layer: Layer,
+  media: Size | null | undefined,
+) {
   const { preset, scaleStart, scaleEnd, distance, easing } = m.continuous;
   if (preset === "none") return;
   const span = timing.continuousEnd - timing.continuousStart;
   const q = span <= 0 ? 1 : ease(easing, (t - timing.continuousStart) / span);
+  const focus = focusInFrame(layer, media);
   if (preset === "slowZoomIn" || preset === "slowZoomOut") {
+    // Zoom toward the focus point: it stays fixed on screen while everything scales about it.
     state.contentScale *= scaleStart + (scaleEnd - scaleStart) * q;
+    if (focus) state.contentOrigin = focus;
     return;
   }
-  // Pans scale the image just enough that its edges never come into view.
   const horizontal = preset === "panLeft" || preset === "panRight";
-  const frameSize = horizontal ? layer.width : layer.height;
-  state.contentScale *= Math.max(scaleStart, 1 + distance / Math.max(1, frameSize));
   const offset = distance / 2 - distance * q; // +d/2 → −d/2
+  if (focus && layer.type === "image") {
+    // Scale about the subject just enough that the pan never reveals an edge.
+    const frame = { width: layer.width, height: layer.height };
+    const rect = imageRectInFrame(layer, media);
+    const needed = coverScaleAbout(rect, frame, focus, horizontal ? distance : 0, horizontal ? 0 : distance);
+    state.contentScale *= Math.max(scaleStart, needed);
+    state.contentOrigin = focus;
+  } else {
+    // Original behaviour: scale about the frame center by the travel distance.
+    const frameSize = horizontal ? layer.width : layer.height;
+    state.contentScale *= Math.max(scaleStart, 1 + distance / Math.max(1, frameSize));
+  }
   if (preset === "panLeft") state.contentTranslateX += offset;
   if (preset === "panRight") state.contentTranslateX -= offset;
   if (preset === "panUp") state.contentTranslateY += offset;
@@ -242,14 +308,24 @@ function applyExit(state: MotionState, m: MotionConfig, timing: LayerTiming, t: 
   }
 }
 
-/** The layer's motion at time `t` (ms from scene start). */
-export function evaluateMotion(layer: Layer, timing: LayerTiming | undefined, t: number): MotionState {
+/**
+ * The layer's motion at time `t` (ms from scene start). `media` is the image's intrinsic
+ * size; it's needed to place a motion focus point (static framing depends on it).
+ */
+export function evaluateMotion(
+  layer: Layer,
+  timing: LayerTiming | undefined,
+  t: number,
+  media?: Size | null,
+): MotionState {
   const state = { ...IDENTITY_MOTION };
   if (!timing) return state;
   const m = layer.motion;
   if (usesTransition(layer)) applyTransition(state, m, timing, t, layer);
   else applyEntrance(state, m, timing, t);
-  if (layer.type === "image" || layer.type === "logo") applyContinuous(state, m, timing, t, layer);
+  if (layer.type === "image" || layer.type === "logo") applyContinuous(state, m, timing, t, layer, media);
+  // A zoom transition without camera motion also settles onto the focus point.
+  if (!state.contentOrigin && state.contentScale !== 1) state.contentOrigin = focusInFrame(layer, media);
   applyExit(state, m, timing, t);
   return state;
 }
@@ -285,7 +361,7 @@ export function timingIssues(layer: Layer, timing: LayerTiming | undefined, scen
 /**
  * Checks whether animated camera motion ever exposes the frame's edges (blank areas).
  * Samples the continuous motion only — transitions and entrances move on purpose.
- * Returns the smallest uniform scale that would keep the frame covered, or null if fine.
+ * `minScaleNeeded` is the factor to multiply the camera scales by to stay covered.
  */
 export function cameraCoverage(
   layer: ImageLayer | LogoLayer,
@@ -295,9 +371,33 @@ export function cameraCoverage(
   const m = layer.motion.continuous;
   if (!timing || m.preset === "none" || layer.type === "logo") return { covered: true, minScaleNeeded: 1 };
   const frame = { width: layer.width, height: layer.height };
-  const fit = layer.fit;
-  const rect = fitImageRect(media ?? frame, frame, fit, layer.focalX, layer.focalY, layer.zoom);
-  const cameraOnly: Layer = {
+  const rect = imageRectInFrame(layer, media);
+  const cameraOnly = cameraOnlyLayer(layer);
+  let worst = 1;
+  for (const st of sampleCamera(cameraOnly, timing, media)) {
+    const o = st.contentOrigin ?? { x: frame.width / 2, y: frame.height / 2 };
+    const s = st.contentScale;
+    const tx = st.contentTranslateX;
+    const ty = st.contentTranslateY;
+    // Factor k (applied to s) each edge needs; only edges that would show matter.
+    const edge = (gap: number, reach: number) => (gap <= 0.5 ? 1 : reach <= 1e-6 ? 10 : (gap + reach) / reach);
+    const left = o.x + (rect.x - o.x) * s + tx;
+    const top = o.y + (rect.y - o.y) * s + ty;
+    const right = o.x + (rect.x + rect.width - o.x) * s + tx;
+    const bottom = o.y + (rect.y + rect.height - o.y) * s + ty;
+    worst = Math.max(
+      worst,
+      edge(left, o.x + tx - left),
+      edge(top, o.y + ty - top),
+      edge(frame.width - right, right - (o.x + tx)),
+      edge(frame.height - bottom, bottom - (o.y + ty)),
+    );
+  }
+  return { covered: worst <= 1.0005, minScaleNeeded: worst };
+}
+
+function cameraOnlyLayer(layer: ImageLayer | LogoLayer): Layer {
+  return {
     ...layer,
     motion: {
       ...layer.motion,
@@ -307,24 +407,51 @@ export function cameraCoverage(
     },
     role: undefined,
   };
-  let worst = 1;
-  const steps = 40;
+}
+
+function sampleCamera(layer: Layer, timing: LayerTiming, media: Size | null | undefined, steps = 40): MotionState[] {
+  const states: MotionState[] = [];
   for (let i = 0; i <= steps; i++) {
     const t = timing.continuousStart + ((timing.continuousEnd - timing.continuousStart) * i) / steps;
-    const st = evaluateMotion(cameraOnly, { ...timing, start: 0, entranceEnd: 0 }, t);
-    // Image rect after scaling about the frame center and translating.
-    const cx = frame.width / 2;
-    const cy = frame.height / 2;
-    const left = cx + (rect.x - cx) * st.contentScale + st.contentTranslateX;
-    const top = cy + (rect.y - cy) * st.contentScale + st.contentTranslateY;
-    const right = cx + (rect.x + rect.width - cx) * st.contentScale + st.contentTranslateX;
-    const bottom = cy + (rect.y + rect.height - cy) * st.contentScale + st.contentTranslateY;
-    if (left > 0.5 || top > 0.5 || right < frame.width - 0.5 || bottom < frame.height - 0.5) {
-      // Scale (applied to the whole motion) that would cover this sample.
-      const needX = Math.max((cx - 0) / Math.max(1e-6, cx - left), (frame.width - cx) / Math.max(1e-6, right - cx));
-      const needY = Math.max(cy / Math.max(1e-6, cy - top), (frame.height - cy) / Math.max(1e-6, bottom - cy));
-      worst = Math.max(worst, needX, needY);
-    }
+    states.push(evaluateMotion(layer, { ...timing, start: 0, entranceEnd: 0 }, t, media));
   }
-  return { covered: worst <= 1.0005, minScaleNeeded: worst };
+  return states;
+}
+
+/**
+ * Framing assistance for a focus point: whether it starts outside the visible frame
+ * (cropped away) or leaves the frame during the camera motion (e.g. a long pan).
+ */
+export function focusVisibility(
+  layer: ImageLayer,
+  media: Size | null,
+  timing: LayerTiming | undefined,
+): { outsideFrame: boolean; leavesFrame: boolean } {
+  const focus = focusInFrame(layer, media);
+  if (!focus || !timing) return { outsideFrame: false, leavesFrame: false };
+  const inside = (p: Point) => p.x >= 0 && p.y >= 0 && p.x <= layer.width && p.y <= layer.height;
+  const outsideFrame = !inside(focus);
+  let leavesFrame = false;
+  for (const st of sampleCamera(cameraOnlyLayer(layer), timing, media)) {
+    const o = st.contentOrigin ?? { x: layer.width / 2, y: layer.height / 2 };
+    const p = {
+      x: o.x + (focus.x - o.x) * st.contentScale + st.contentTranslateX,
+      y: o.y + (focus.y - o.y) * st.contentScale + st.contentTranslateY,
+    };
+    if (!inside(p)) leavesFrame = true;
+  }
+  return { outsideFrame, leavesFrame: !outsideFrame && leavesFrame };
+}
+
+/**
+ * What the camera shows at its most zoomed-in moment, in frame pixels (unzoomed
+ * content coordinates). Used to draw a framing guide in the editor.
+ */
+export function zoomedFraming(layer: ImageLayer, media: Size | null): Rect | null {
+  const c = layer.motion.continuous;
+  if (c.preset !== "slowZoomIn" && c.preset !== "slowZoomOut") return null;
+  const s = Math.max(c.scaleStart, c.scaleEnd);
+  if (s <= 1) return null;
+  const o = focusInFrame(layer, media) ?? { x: layer.width / 2, y: layer.height / 2 };
+  return { x: o.x - o.x / s, y: o.y - o.y / s, width: layer.width / s, height: layer.height / s };
 }
